@@ -44,7 +44,8 @@ UNIT="$HOME/.config/systemd/user/$NAME.service"
 has_systemd() { systemctl --user show-environment >/dev/null 2>&1; }
 
 win_path() { # a Windows environment variable as a WSL path
-  wslpath "$(cmd.exe /c "echo %$1%" 2>/dev/null | tr -d '\r')"
+  # </dev/null: cmd.exe reads stdin, which would swallow the rest of a script piped into bash.
+  wslpath "$(cmd.exe /c "echo %$1%" < /dev/null 2> /dev/null | tr -d '\r')"
 }
 STARTUP_SCRIPT=""
 [ "$IS_WSL" = 1 ] && STARTUP_SCRIPT="$(win_path APPDATA)/Microsoft/Windows/Start Menu/Programs/Startup/remote-ai-wsl.vbs"
