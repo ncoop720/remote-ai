@@ -1,6 +1,7 @@
 import type {
   CreateSessionRequest,
   DevAction,
+  DiffResult,
   ProjectInfo,
   StartSessionRequest,
   VisiblePrompt,
@@ -44,6 +45,8 @@ export const api = {
   pushInfo: () => request<{ publicKey: string; subscriptions: number }>('GET', '/api/push'),
   pushSubscribe: (subscription: PushSubscriptionJSON) => request<{ ok: boolean }>('POST', '/api/push/subscribe', { subscription }),
   pushUnsubscribe: (endpoint: string) => request<void>('POST', '/api/push/unsubscribe', { endpoint }),
+  diff: (id: string) => request<DiffResult>('GET', `${session(id)}/diff`),
+  cloneProject: (url: string, name?: string) => request<{ name: string }>('POST', '/api/projects', { url, name }),
   auth: () => request<{ required: boolean; enabled: boolean }>('GET', '/api/auth'),
   login: (password: string) => request<{ ok: boolean }>('POST', '/api/login', { password }),
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),

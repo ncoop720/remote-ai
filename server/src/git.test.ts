@@ -76,6 +76,19 @@ test('parseWorktrees reads main checkout, branches and detached heads', () => {
   assert.equal(wts[3]?.prunable, true);
 });
 
+test('clone URLs and project names', async () => {
+  const { projectNameFromUrl, validateClone } = await import('./git.js');
+  assert.equal(projectNameFromUrl('https://github.com/ncoop720/mmorpg.git'), 'mmorpg');
+  assert.equal(projectNameFromUrl('git@github.com:ncoop720/remote-ai.git'), 'remote-ai');
+  assert.equal(projectNameFromUrl('https://gitlab.com/group/sub/app/'), 'app');
+  assert.equal(validateClone('https://github.com/a/b.git', 'b'), null);
+  assert.equal(validateClone('git@github.com:a/b.git', 'b'), null);
+  assert.match(validateClone('/etc', 'etc') ?? '', /https/);
+  assert.match(validateClone('--upload-pack=evil', 'x') ?? '', /https/);
+  assert.match(validateClone('https://github.com/a/b.git', '../escape') ?? '', /Project names/);
+  assert.match(validateClone('https://github.com/a/b.git', '.hidden') ?? '', /Project names/);
+});
+
 test('parseWorktrees handles empty output', () => {
   assert.deepEqual(parseWorktrees(''), []);
 });

@@ -74,6 +74,26 @@ test('tool summaries', () => {
   assert.equal(summarizeToolInput('mcp__thing__do', { query: 'hello' }), 'hello');
 });
 
+test('readTitle finds the latest ai-title line', async () => {
+  const fs = await import('node:fs');
+  const os = await import('node:os');
+  const path = await import('node:path');
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ra-title-')), 't.jsonl');
+  fs.writeFileSync(
+    file,
+    [
+      line({ type: 'ai-title', aiTitle: 'First guess' }),
+      line({ type: 'user', message: { content: 'hi' } }),
+      line({ type: 'ai-title', aiTitle: 'Subtract function in math.ts' }),
+      line({ type: 'assistant', message: { content: [{ type: 'text', text: 'ok' }] } }),
+    ].join('\n'),
+  );
+  const { readTitle } = await import('./transcript.js');
+  assert.equal(readTitle(file), 'Subtract function in math.ts');
+  assert.equal(readTitle(null), null);
+  assert.equal(readTitle(`${file}.missing`), null);
+});
+
 test('transcript folder naming matches Claude Code', () => {
   assert.match(transcriptDir('/tmp/ra-real/worktrees/demo/real-muomf0x3'), /projects[\\/]-tmp-ra-real-worktrees-demo-real-muomf0x3$/);
 });

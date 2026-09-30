@@ -71,9 +71,36 @@ export interface SessionInfo {
   dev: DevInfo;
   /** Ports that processes running inside this worktree are listening on. */
   ports: ListeningPort[];
+  /** Tracked changes since the branch point (untracked files are counted in `dirty`). */
+  changes: { files: number; additions: number; deletions: number };
+  /** The title Claude gave its latest conversation here, if any. */
+  title: string | null;
 }
 
 export type DevAction = 'start' | 'stop' | 'restart' | 'setup';
+
+export interface DiffFile {
+  path: string;
+  oldPath?: string;
+  status: 'added' | 'deleted' | 'modified' | 'renamed' | 'untracked';
+  additions: number;
+  deletions: number;
+  binary: boolean;
+  truncated: boolean;
+  /** The file's part of `git diff`, including its header lines. */
+  patch: string;
+}
+
+export interface DiffResult {
+  /** Branch the worktree was compared with (null: the main checkout, compared with HEAD). */
+  base: string | null;
+  /** The commit compared against: the merge base with `base`, or HEAD. */
+  against: string;
+  files: DiffFile[];
+  additions: number;
+  deletions: number;
+  truncated: boolean;
+}
 
 /** One entry of the chat view, parsed from Claude Code's transcript. Results pair with tools by toolUseId. */
 export type ChatItem =

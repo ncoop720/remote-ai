@@ -10,13 +10,15 @@ import { HttpError } from './errors.js';
 import { sessionId, slug } from './ids.js';
 import { listeningPorts } from './ports.js';
 import { parseVisiblePrompt } from './prompt.js';
-import { findTranscript } from './transcript.js';
+import { diffBase, diffStat, worktreeDiff } from './diff.js';
+import { findTranscript, readTitle } from './transcript.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
 import type { Tmux } from './tmux.js';
 import type {
   CreateSessionRequest,
   DevAction,
+  DiffResult,
   ListeningPort,
   PermissionMode,
   ProjectInfo,
@@ -115,9 +117,10 @@ export class SessionManager {
             index.push({ id, project: p.name, projectPath: p.path, worktree: wt, isMain });
 
             const base = this.state.baseFor(wt.path) ?? (isMain ? null : defaultBranch);
-            const [dirty, ahead] = await Promise.all([
+            const [dirty, ahead, changes] = await Promise.all([
               git.dirtyCount(wt.path).catch(() => 0),
               base ? git.aheadOf(wt.path, base) : Promise.resolve(null),
+              diffBase(wt.path, base).then((against) => diffStat(wt.path, against)),
             ]);
             const isRunning = running.has(id);
             const sessionWindows = windows.get(id) ?? [];
@@ -137,6 +140,8 @@ export class SessionManager {
               status: isRunning ? this.statuses.get(id) : { state: 'stopped', updatedAt: 0 },
               dev: this.dev.info({ id, path: wt.path }, config, sessionWindows),
               ports: portsIn(wt.path, allPaths),
+              changes,
+              title: readTitle(findTranscript(wt.path, this.statuses.get(id).transcriptPath)),
             };
           }),
         );
@@ -282,6 +287,43 @@ export class SessionManager {
         throw new HttpError(400, `Unknown action ${String(action)}`);
     }
     this.invalidate();
+  }
+
+  /** Everything the worktree changed since it branched, including uncommitted and untracked files. */
+  async diff(id: string): Promise<DiffResult> {
+    const ref = await this.find(id);
+    const base = this.state.baseFor(ref.worktree.path) ?? (ref.isMain ? null : (await this.mainBranch(ref)) ?? null);
+    return worktreeDiff(ref.worktree.path, base);
+  }
+
+  private async mainBranch(ref: WorktreeRef): Promise<string | null> {
+    const worktrees = await git.listWorktrees(ref.projectPath).catch(() => [] as Worktree[]);
+    return worktrees[0]?.branch ?? null;
+  }
+
+  /** Clone a repository into the projects folder. */
+  async cloneProject(url: string, name?: string): Promise<string> {
+    const cleanUrl = String(url ?? '').trim();
+    const projectName = (name?.trim() || git.projectNameFromUrl(cleanUrl)).trim();
+    const problem = git.validateClone(cleanUrl, projectName);
+    if (problem) throw new HttpError(400, problem);
+    const dest = path.join(this.cfg.projectsDir, projectName);
+    if (fs.existsSync(dest)) throw new HttpError(409, `${projectName} already exists in ${this.cfg.projectsDir}`);
+    fs.mkdirSync(this.cfg.projectsDir, { recursive: true });
+    try {
+      await git.cloneRepo(cleanUrl, dest);
+    } catch (err) {
+      fs.rmSync(dest, { recursive: true, force: true });
+      const detail = (err as Error).message;
+      throw new HttpError(
+        400,
+        /terminal prompts disabled|could not read Username|Permission denied|Authentication failed/i.test(detail)
+          ? `Couldn't sign in to clone that repository. Set up git credentials on the server first (the README explains how). ${detail}`
+          : detail,
+      );
+    }
+    this.invalidate();
+    return projectName;
   }
 
   /** Project and branch for notifications; falls back to the id if the worktree is gone. */

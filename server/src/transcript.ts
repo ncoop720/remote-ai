@@ -163,6 +163,34 @@ export function findTranscript(cwd: string, reported: string | undefined): strin
   return newest?.file ?? null;
 }
 
+/** The latest title Claude gave the conversation (`ai-title` lines), from the end of the file. */
+export function readTitle(file: string | null): string | null {
+  if (!file) return null;
+  let fd: number | undefined;
+  try {
+    fd = fs.openSync(file, 'r');
+    const size = fs.fstatSync(fd).size;
+    const start = Math.max(0, size - 256 * 1024);
+    const buf = Buffer.alloc(size - start);
+    fs.readSync(fd, buf, 0, buf.length, start);
+    const lines = buf.toString('utf8').split('\n');
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i]!.includes('"ai-title"')) continue;
+      try {
+        const title = (JSON.parse(lines[i]!) as { aiTitle?: unknown }).aiTitle;
+        if (typeof title === 'string' && title.trim()) return title.trim();
+      } catch {
+        // a partial first line
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
 /**
  * Stream a transcript as chat items over server-sent events: `{reset: true, items}` with the
  * recent history, then `{items}` as lines are appended.

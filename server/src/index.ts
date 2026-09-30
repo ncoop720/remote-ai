@@ -218,6 +218,14 @@ app.post<{ Params: { id: string; action: string }; Querystring: { name?: string 
   },
 );
 
+app.get<{ Params: { id: string } }>('/api/sessions/:id/diff', async (req) => sessions.diff(req.params.id));
+
+app.post<{ Body: { url: string; name?: string } }>('/api/projects', async (req) => {
+  const name = await sessions.cloneProject(req.body?.url, req.body?.name);
+  hub.broadcast({ type: 'sessions' });
+  return { name };
+});
+
 app.get<{ Params: { id: string } }>('/api/sessions/:id/chat', async (req, reply) => {
   streamTranscript(reply, await sessions.transcriptFor(req.params.id));
   return reply;

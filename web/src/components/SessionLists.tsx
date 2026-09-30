@@ -37,6 +37,7 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
                 href={routes.session(s.id)}
                 className={`sidebar-row${s.id === selectedId ? ' selected' : ''}`}
                 aria-current={s.id === selectedId ? 'page' : undefined}
+                title={s.title ?? undefined}
               >
                 <StatusDot state={s.status.state} />
                 <span className="mono grow ellipsis">{s.branch ?? 'detached'}</span>
