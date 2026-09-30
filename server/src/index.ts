@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
@@ -324,5 +325,20 @@ setInterval(async () => {
   }
 }, 3000).unref();
 
-await app.listen({ host: cfg.host, port: cfg.port });
+if (cfg.host === 'localhost') {
+  // Distros often map "localhost" to 127.0.0.1 only, but clients such as PowerShell or WSL's
+  // mirrored networking try ::1 first and stall. Listen on 127.0.0.1 and forward ::1 to it.
+  await app.listen({ host: '127.0.0.1', port: cfg.port });
+  net
+    .createServer((client) => {
+      const upstream = net.connect(cfg.port, '127.0.0.1');
+      client.pipe(upstream).pipe(client);
+      client.on('error', () => upstream.destroy());
+      upstream.on('error', () => client.destroy());
+    })
+    .on('error', (err) => app.log.warn({ err }, 'not listening on ::1'))
+    .listen(cfg.port, '::1');
+} else {
+  await app.listen({ host: cfg.host, port: cfg.port });
+}
 app.log.info(`projects: ${cfg.projectsDir}  worktrees: ${cfg.worktreesDir}  tmux socket: ${cfg.tmuxSocket}`);
