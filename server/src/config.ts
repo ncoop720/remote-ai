@@ -41,7 +41,8 @@ export function loadConfig(): Config {
     : {};
 
   return {
-    host: env.REMOTE_AI_HOST ?? file.host ?? '127.0.0.1',
+    // "localhost" listens on both 127.0.0.1 and ::1, so clients that try IPv6 first still connect.
+    host: env.REMOTE_AI_HOST ?? file.host ?? 'localhost',
     port: Number(env.REMOTE_AI_PORT ?? file.port ?? 8787),
     projectsDir: path.resolve(expandHome(env.REMOTE_AI_PROJECTS_DIR ?? file.projectsDir ?? '~/projects')),
     worktreesDir: path.resolve(expandHome(env.REMOTE_AI_WORKTREES_DIR ?? file.worktreesDir ?? '~/worktrees')),

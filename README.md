@@ -114,7 +114,7 @@ Set environment variables, or put the same keys (camelCase) in `~/.remote-ai/con
 | Env var | Default | |
 |---|---|---|
 | `REMOTE_AI_PORT` | `8787` | HTTP port |
-| `REMOTE_AI_HOST` | `127.0.0.1` | Bind address |
+| `REMOTE_AI_HOST` | `localhost` | Bind address (localhost = 127.0.0.1 and ::1) |
 | `REMOTE_AI_PROJECTS_DIR` | `~/projects` | Where project checkouts live |
 | `REMOTE_AI_WORKTREES_DIR` | `~/worktrees` | Where new worktrees are created |
 | `REMOTE_AI_DATA_DIR` | `~/.remote-ai` | State, generated tmux.conf, hook settings |
