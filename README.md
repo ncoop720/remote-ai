@@ -121,6 +121,10 @@ Set environment variables, or put the same keys (camelCase) in `~/.remote-ai/con
 | `REMOTE_AI_TMUX_SOCKET` | `remote-ai` | Name of the dedicated tmux server |
 | `REMOTE_AI_CLAUDE_COMMAND` | `claude` | Command used to start Claude Code |
 | `REMOTE_AI_PORT_BASE` | `3100` | First dev-server port |
+| `REMOTE_AI_PASSWORD` | (none) | Require a login for proxied and remote requests |
+| `REMOTE_AI_PUSH_SUBJECT` | repo URL | Contact sent to push services (VAPID subject) |
+
+With the service, set these in `~/.config/systemd/user/remote-ai.service` (`Environment=KEY=value`) or in `~/.remote-ai/config.json`, then `systemctl --user restart remote-ai`.
 
 ## Development
 

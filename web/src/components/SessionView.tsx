@@ -160,7 +160,13 @@ export function SessionView({ session, isDesktop, onChanged }: {
             </button>
           )}
           {session.running && (
-            <ConfirmButton label="Stop" confirmLabel="Stop session?" icon={<Stop size={14} />} onConfirm={() => void act(() => api.stop(session.id))} />
+            <ConfirmButton
+              label={isDesktop ? 'End session' : 'End'}
+              ariaLabel="End session (stops Claude and the dev servers)"
+              confirmLabel="End session?"
+              icon={<Stop size={14} />}
+              onConfirm={() => void act(() => api.stop(session.id))}
+            />
           )}
           {!session.isMain && (
             <ConfirmButton

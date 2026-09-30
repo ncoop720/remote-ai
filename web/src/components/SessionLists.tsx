@@ -127,8 +127,8 @@ function SessionRow({ session: s }: { session: SessionInfo }) {
 function EmptyProjects() {
   return (
     <p className="empty">
-      No projects yet. Clone a repository into the projects directory on the server (default <code>~/projects</code>) and
-      it will show up here.
+      No projects yet. Use <a href={routes.newSession()}>New session → Clone a repo</a>, or clone one into the projects
+      folder on the server (<code>~/projects</code>).
     </p>
   );
 }
