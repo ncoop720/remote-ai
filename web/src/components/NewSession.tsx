@@ -5,8 +5,9 @@ import type { PermissionMode, ProjectInfo } from '../../../shared/types';
 import { Close } from './icons';
 
 const MODES: { id: PermissionMode; label: string }[] = [
-  { id: 'default', label: 'Ask' },
-  { id: 'acceptEdits', label: 'Accept edits' },
+  { id: 'auto', label: 'Auto' },
+  { id: 'manual', label: 'Ask' },
+  { id: 'acceptEdits', label: 'Edits' },
   { id: 'plan', label: 'Plan' },
 ];
 
@@ -20,7 +21,7 @@ export function NewSession({ projects, initialProject, onCreated }: {
   const [branch, setBranch] = useState('');
   const [base, setBase] = useState('');
   const [prompt, setPrompt] = useState('');
-  const [mode, setMode] = useState<PermissionMode>('default');
+  const [mode, setMode] = useState<PermissionMode>('auto');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -43,7 +43,7 @@ function Meta({ session }: { session: SessionInfo }) {
 }
 
 function StoppedPanel({ session, onChanged }: { session: SessionInfo; onChanged: () => void }) {
-  const [mode, setMode] = useState<PermissionMode>('default');
+  const [mode, setMode] = useState<PermissionMode>('auto');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -66,7 +66,8 @@ function StoppedPanel({ session, onChanged }: { session: SessionInfo; onChanged:
       <label className="field">
         <span>Permissions</span>
         <select value={mode} onChange={(e) => setMode(e.target.value as PermissionMode)}>
-          <option value="default">Ask before acting</option>
+          <option value="auto">Auto (a classifier approves safe actions)</option>
+          <option value="manual">Ask before acting</option>
           <option value="acceptEdits">Accept edits</option>
           <option value="plan">Plan only</option>
         </select>

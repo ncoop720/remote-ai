@@ -52,7 +52,8 @@ export interface ProjectInfo {
   sessions: SessionInfo[];
 }
 
-export type PermissionMode = 'default' | 'acceptEdits' | 'plan';
+/** Values for `claude --permission-mode`. "manual" asks before every action (formerly "default"). */
+export type PermissionMode = 'auto' | 'manual' | 'acceptEdits' | 'plan';
 
 export interface CreateSessionRequest {
   branch: string;

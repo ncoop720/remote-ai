@@ -18,7 +18,7 @@ const HOOK_EVENTS = [
   'StopFailure',
 ] as const;
 
-export const PERMISSION_MODES: readonly PermissionMode[] = ['default', 'acceptEdits', 'plan'];
+export const PERMISSION_MODES: readonly PermissionMode[] = ['auto', 'manual', 'acceptEdits', 'plan'];
 
 /** The token lets /api/hook reject posts that didn't come from our generated hook command. */
 export function loadHookToken(dataDir: string): string {
@@ -54,9 +54,8 @@ export function buildClaudeCommand(opts: {
   prompt?: string;
 }): string {
   const parts = [opts.claudeCommand, '--settings', shellQuote(opts.settingsPath)];
-  if (opts.permissionMode && opts.permissionMode !== 'default') {
-    parts.push('--permission-mode', opts.permissionMode);
-  }
+  // Always explicit when chosen: leaving it out falls back to the user's configured default, which may be auto.
+  if (opts.permissionMode) parts.push('--permission-mode', opts.permissionMode);
   if (opts.resume) parts.push('--continue');
   if (opts.prompt?.trim()) parts.push(shellQuote(opts.prompt.trim()));
   return parts.join(' ');

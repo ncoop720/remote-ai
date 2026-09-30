@@ -8,7 +8,9 @@ import type { SessionInfo, VisiblePrompt } from '../../../shared/types';
  * the actual screen, so the labels always match what the terminal offers.
  */
 export function PromptCard({ session }: { session: SessionInfo }) {
-  const needsInput = session.status.state === 'needs_input';
+  // Menus also appear without any hook firing (the folder-trust prompt at startup, one-time
+  // announcements while idle), so watch the screen whenever the session is running.
+  const needsInput = session.running;
   const [prompt, setPrompt] = useState<VisiblePrompt | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -36,6 +38,8 @@ export function PromptCard({ session }: { session: SessionInfo }) {
   if (!needsInput || !prompt) return null;
 
   const detail = describeTool(session.status.tool);
+  // The highlighted default isn't always the one you want (the trust prompt defaults to "No, exit").
+  const primaryKey = prompt.options.find((o) => /^yes\b/i.test(o.label))?.key;
   const choose = async (key: string) => {
     setBusy(true);
     setError(null);
@@ -61,7 +65,7 @@ export function PromptCard({ session }: { session: SessionInfo }) {
           <button
             key={o.key}
             type="button"
-            className={o.key === '1' ? 'btn btn-primary' : 'btn'}
+            className={o.key === primaryKey ? 'btn btn-primary' : 'btn'}
             disabled={busy}
             onClick={() => void choose(o.key)}
           >

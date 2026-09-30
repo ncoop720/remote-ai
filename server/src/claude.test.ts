@@ -16,6 +16,10 @@ test('buildClaudeCommand adds flags only when needed', () => {
     'claude --settings /d/s.json',
   );
   assert.equal(
+    buildClaudeCommand({ claudeCommand: 'claude', settingsPath: '/d/s.json', permissionMode: 'manual' }),
+    'claude --settings /d/s.json --permission-mode manual',
+  );
+  assert.equal(
     buildClaudeCommand({
       claudeCommand: 'claude',
       settingsPath: '/d/s.json',
