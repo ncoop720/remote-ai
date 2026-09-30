@@ -49,7 +49,7 @@ Clone the repositories you want to work on into `~/projects`. Each one shows up 
 
 ### On Windows (WSL2)
 
-Run the same commands inside Ubuntu. WSL needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`, the default on recent Ubuntu images) and, because it stops a distro shortly after its last terminal closes, `--wsl-autostart` keeps it running: it sets `instanceIdleTimeout=-1` in `%UserProfile%\.wslconfig` and adds a hidden Windows startup entry that boots the distro when you log in. With `networkingMode=mirrored` in `.wslconfig`, Ubuntu and Windows share `localhost`, so dev servers and databases on either side can reach each other.
+Run the same commands inside Ubuntu. WSL needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`, the default on recent Ubuntu images) and, because it stops a distro shortly after its last terminal closes, `--wsl-autostart` keeps it running: it sets `instanceIdleTimeout=-1` in `%UserProfile%\.wslconfig` and adds a hidden Windows startup entry that boots the distro when you log in. With `networkingMode=mirrored` in `.wslconfig`, Ubuntu and Windows share `localhost`, so dev servers and databases on either side can reach each other. Mirrored networking only bridges IPv4 loopback: browsers fall back to it by themselves, but if a Windows tool stalls on `localhost`, use `127.0.0.1`.
 
 ### Reaching it from your phone
 
