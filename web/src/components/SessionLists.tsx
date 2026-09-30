@@ -3,6 +3,7 @@ import { routes } from '../hooks';
 import { groupOf, subtitle, type StatusGroup } from '../status';
 import type { ProjectInfo, SessionInfo } from '../../../shared/types';
 import { ChevronRight, Folder, Plus } from './icons';
+import { NotificationsButton } from './NotificationsButton';
 import { StatusDot } from './StatusDot';
 
 /** Desktop sidebar: sessions grouped by project. */
@@ -11,9 +12,12 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
     <nav className="sidebar" aria-label="Projects and sessions">
       <div className="sidebar-head">
         <span className="brand">remote-ai</span>
-        <a className="btn btn-small" href={routes.newSession()}>
-          <Plus size={14} /> New
-        </a>
+        <div className="row">
+          <NotificationsButton />
+          <a className="btn btn-small" href={routes.newSession()}>
+            <Plus size={14} /> New
+          </a>
+        </div>
       </div>
       <div className="sidebar-projects">
         {projects.map((p) => (
@@ -62,6 +66,7 @@ export function MobileSessionList({ projects }: { projects: ProjectInfo[] }) {
     <div className="mobile-list">
       <header className="mobile-list-head">
         <h1>Sessions</h1>
+        <NotificationsButton />
       </header>
       {projects.length > 1 && (
         <div className="chips" role="group" aria-label="Filter by project">

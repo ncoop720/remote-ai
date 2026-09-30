@@ -2,19 +2,22 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 import { navigate, routes } from '../hooks';
 import type { PermissionMode, SessionInfo } from '../../../shared/types';
+import { ChatView } from './ChatView';
 import { DevPanel, LogsView, PreviewView } from './DevViews';
 import { ChevronLeft, Play, Stop, Trash } from './icons';
-import { MobileControls } from './MobileControls';
+import { Composer, MobileControls } from './MobileControls';
 import { PromptCard } from './PromptCard';
 import { StatusPill } from './StatusDot';
 import { Terminal } from './Terminal';
 
 /** A button that asks for a second tap before doing something destructive. */
-function ConfirmButton({ label, confirmLabel, icon, onConfirm }: {
+function ConfirmButton({ label, confirmLabel, icon, onConfirm, ariaLabel }: {
   label: string;
   confirmLabel: string;
   icon: React.ReactNode;
   onConfirm: () => void;
+  /** Needed when `label` is empty (icon-only on phones). */
+  ariaLabel?: string;
 }) {
   const [armed, setArmed] = useState(false);
   useEffect(() => {
@@ -26,6 +29,7 @@ function ConfirmButton({ label, confirmLabel, icon, onConfirm }: {
     <button
       type="button"
       className={armed ? 'btn btn-danger' : 'btn'}
+      aria-label={armed ? confirmLabel : ariaLabel}
       onClick={() => (armed ? (setArmed(false), onConfirm()) : setArmed(true))}
     >
       {icon}
@@ -93,7 +97,9 @@ export function SessionView({ session, isDesktop, onChanged }: {
 }) {
   const [error, setError] = useState<string | null>(null);
   const [needsForce, setNeedsForce] = useState(false);
-  const [tab, setTab] = useState<Tab>('terminal');
+  const [tab, setTab] = useState<Tab>('chat');
+  const [leftView, setLeftView] = useState<'terminal' | 'chat'>('terminal');
+  const working = session.status.state === 'working';
   const [devToggled, setDevToggled] = useState<boolean | null>(null);
   const showDev = devToggled ?? hasDevContent(session);
   const runningServers = session.dev.servers.filter((s) => s.state === 'running').length;
@@ -142,7 +148,13 @@ export function SessionView({ session, isDesktop, onChanged }: {
             <ConfirmButton label="Stop" confirmLabel="Stop session?" icon={<Stop size={14} />} onConfirm={() => void act(() => api.stop(session.id))} />
           )}
           {!session.isMain && (
-            <ConfirmButton label={isDesktop ? 'Remove worktree' : ''} confirmLabel="Remove?" icon={<Trash size={15} />} onConfirm={() => void remove(false)} />
+            <ConfirmButton
+              label={isDesktop ? 'Remove worktree' : ''}
+              ariaLabel="Remove worktree"
+              confirmLabel="Remove?"
+              icon={<Trash size={15} />}
+              onConfirm={() => void remove(false)}
+            />
           )}
         </div>
       </header>
@@ -163,8 +175,21 @@ export function SessionView({ session, isDesktop, onChanged }: {
       ) : isDesktop ? (
         <div className="session-split">
           <div className="session-body">
-            <Terminal key={session.id} sessionId={session.id} fontSize={13} />
+            <div className="segmented segmented-small" role="group" aria-label="View">
+              <button type="button" aria-pressed={leftView === 'terminal'} onClick={() => setLeftView('terminal')}>
+                Terminal
+              </button>
+              <button type="button" aria-pressed={leftView === 'chat'} onClick={() => setLeftView('chat')}>
+                Chat
+              </button>
+            </div>
+            {/* The terminal stays mounted so switching views doesn't drop its connection. */}
+            <div className="pane" hidden={leftView !== 'terminal'}>
+              <Terminal key={session.id} sessionId={session.id} fontSize={13} />
+            </div>
+            {leftView === 'chat' && <ChatView session={session} />}
             <PromptCard session={session} />
+            {leftView === 'chat' && <Composer sessionId={session.id} working={working} submitOnEnter />}
           </div>
           {showDev && <DevPanel session={session} />}
         </div>
@@ -179,6 +204,15 @@ export function SessionView({ session, isDesktop, onChanged }: {
               </button>
             ))}
           </nav>
+          {tab === 'chat' && (
+            <div className="session-body">
+              <ChatView session={session} />
+              <PromptCard session={session} />
+              <div className="mobile-controls">
+                <Composer sessionId={session.id} working={working} />
+              </div>
+            </div>
+          )}
           {/* The terminal stays mounted so switching tabs doesn't drop its connection. */}
           <div className="session-body" hidden={tab !== 'terminal'}>
             <Terminal key={session.id} sessionId={session.id} fontSize={12} />
@@ -202,6 +236,7 @@ export function SessionView({ session, isDesktop, onChanged }: {
 }
 
 const TABS = [
+  { id: 'chat', label: 'Chat' },
   { id: 'terminal', label: 'Terminal' },
   { id: 'logs', label: 'Logs' },
   { id: 'preview', label: 'Preview' },

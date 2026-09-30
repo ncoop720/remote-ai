@@ -1,0 +1,3 @@
+# Keep LF everywhere: the server and scripts run on Linux, and CRLF breaks shell scripts.
+* text=auto eol=lf
+*.png binary

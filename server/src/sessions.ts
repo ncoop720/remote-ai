@@ -10,6 +10,7 @@ import { HttpError } from './errors.js';
 import { sessionId, slug } from './ids.js';
 import { listeningPorts } from './ports.js';
 import { parseVisiblePrompt } from './prompt.js';
+import { findTranscript } from './transcript.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
 import type { Tmux } from './tmux.js';
@@ -281,6 +282,19 @@ export class SessionManager {
         throw new HttpError(400, `Unknown action ${String(action)}`);
     }
     this.invalidate();
+  }
+
+  /** Project and branch for notifications; falls back to the id if the worktree is gone. */
+  async label(id: string): Promise<{ id: string; project: string; branch: string }> {
+    const ref = await this.find(id).catch(() => null);
+    if (!ref) return { id, project: id.split('__')[0] ?? id, branch: id.split('__')[1] ?? '' };
+    return { id, project: ref.project, branch: ref.worktree.branch ?? path.basename(ref.worktree.path) };
+  }
+
+  /** The Claude transcript to show in the chat view, or null before the first conversation. */
+  async transcriptFor(id: string): Promise<string | null> {
+    const ref = await this.find(id);
+    return findTranscript(ref.worktree.path, this.statuses.get(id).transcriptPath);
   }
 
   /** Where a session's server (or setup) output is logged; the name must be one it has. */

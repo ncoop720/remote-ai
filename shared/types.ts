@@ -75,6 +75,14 @@ export interface SessionInfo {
 
 export type DevAction = 'start' | 'stop' | 'restart' | 'setup';
 
+/** One entry of the chat view, parsed from Claude Code's transcript. Results pair with tools by toolUseId. */
+export type ChatItem =
+  | { kind: 'user'; id: string; text: string; time: string }
+  | { kind: 'assistant'; id: string; text: string; time: string }
+  | { kind: 'command'; id: string; text: string; time: string }
+  | { kind: 'tool'; id: string; toolUseId: string; name: string; summary: string; time: string }
+  | { kind: 'result'; id: string; toolUseId: string; ok: boolean; output: string };
+
 export interface ProjectInfo {
   name: string;
   path: string;

@@ -78,7 +78,7 @@ export function reduceHook(prev: SessionStatus, p: HookPayload, now = Date.now()
   }
 }
 
-/** In-memory status per session id. Emits `change` with (sessionId, status). */
+/** In-memory status per session id. Emits `change` with (sessionId, next, prev). */
 export class StatusStore extends EventEmitter {
   private readonly statuses = new Map<string, SessionStatus>();
 
@@ -91,11 +91,12 @@ export class StatusStore extends EventEmitter {
     const next = reduceHook(prev, payload);
     if (next === prev) return;
     this.statuses.set(sessionId, next);
-    this.emit('change', sessionId, next);
+    this.emit('change', sessionId, next, prev);
   }
 
   reset(sessionId: string): void {
+    const prev = this.get(sessionId);
     this.statuses.delete(sessionId);
-    this.emit('change', sessionId, INITIAL_STATUS);
+    this.emit('change', sessionId, INITIAL_STATUS, prev);
   }
 }

@@ -13,12 +13,14 @@ import { HttpError } from './errors.js';
 import { EventHub } from './events.js';
 import { streamLog } from './logs.js';
 import { listeningPorts } from './ports.js';
+import { noticeFor, PushService } from './push.js';
 import { SessionManager } from './sessions.js';
 import { StateStore } from './state.js';
 import { StatusStore, type HookPayload } from './status.js';
 import { attachTerminal } from './terminal.js';
+import { streamTranscript } from './transcript.js';
 import { Tmux } from './tmux.js';
-import type { CreateSessionRequest, DevAction, StartSessionRequest } from '../../shared/types.js';
+import type { CreateSessionRequest, DevAction, SessionStatus, StartSessionRequest } from '../../shared/types.js';
 
 const cfg = loadConfig();
 const tmux = new Tmux(cfg.tmuxSocket, cfg.dataDir);
@@ -38,7 +40,23 @@ try {
   app.log.warn({ err }, 'could not apply tmux.conf (is tmux installed?)');
 }
 
-statuses.on('change', (sessionId: string, status) => hub.broadcast({ type: 'status', sessionId, status }));
+const push = new PushService(cfg.dataDir, cfg.pushSubject);
+const lastNotice = new Map<string, number>();
+
+statuses.on('change', (sessionId: string, status: SessionStatus, prev: SessionStatus) => {
+  hub.broadcast({ type: 'status', sessionId, status });
+  void (async () => {
+    const notice = noticeFor(await sessions.label(sessionId), prev, status);
+    if (!notice || push.info().subscriptions === 0) return;
+    // A prompt answered and re-asked within seconds shouldn't buzz the phone twice.
+    const key = `${sessionId}:${notice.title}`;
+    if (Date.now() - (lastNotice.get(key) ?? 0) < 5000) return;
+    lastNotice.set(key, Date.now());
+    app.log.info({ sessionId, title: notice.title }, 'push notification');
+    const result = await push.send(notice);
+    if (result.failed > 0) app.log.warn({ sessionId, title: notice.title, ...result }, 'push notification not delivered to every device');
+  })().catch((err: unknown) => app.log.warn({ err }, 'push notification failed'));
+});
 
 await app.register(websocket);
 
@@ -149,11 +167,36 @@ app.post<{ Params: { id: string; action: string }; Querystring: { name?: string 
   },
 );
 
+app.get<{ Params: { id: string } }>('/api/sessions/:id/chat', async (req, reply) => {
+  streamTranscript(reply, await sessions.transcriptFor(req.params.id));
+  return reply;
+});
+
 app.get<{ Params: { id: string; name: string } }>('/api/sessions/:id/logs/:name', async (req, reply) => {
   const file = await sessions.logPath(req.params.id, req.params.name);
   streamLog(reply, file);
   return reply;
 });
+
+// ---- Push notifications ----
+
+app.get('/api/push', async () => push.info());
+
+app.post<{ Body: { subscription: unknown } }>('/api/push/subscribe', async (req) => {
+  const sub = push.subscribe(req.body?.subscription, req.headers['user-agent']);
+  // Confirms the whole path (keys, relay, service worker) works on this device.
+  const result = await push.send({ title: 'Notifications are on', body: "You'll hear when a session needs you or finishes.", tag: 'remote-ai', url: '/' }, sub);
+  return { ok: result.sent === 1 };
+});
+
+app.post<{ Body: { endpoint: string } }>('/api/push/unsubscribe', async (req) => {
+  push.unsubscribe(String(req.body?.endpoint ?? ''));
+  return { ok: true };
+});
+
+app.post('/api/push/test', async () =>
+  push.send({ title: 'Test notification', body: 'Push notifications from remote-ai work.', tag: 'remote-ai', url: '/' }),
+);
 
 // Claude Code hooks post here (see claude.ts). Always answer 204 quickly; hooks must never block Claude.
 app.post<{ Body: HookPayload }>('/api/hook', async (req, reply) => {

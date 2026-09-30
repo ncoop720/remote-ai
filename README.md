@@ -80,6 +80,12 @@ Output goes to `~/.remote-ai/logs/<session>/<name>.log` and streams to the Logs 
 
 The Preview panel shows any port a process inside the worktree listens on, at `http://<the host you opened the dashboard on>:<port>`. Dev servers that only listen on localhost can be previewed from the machine itself; to preview them from your phone they need to listen on all interfaces (for Vite, `--host`). When the dashboard itself is served over https (e.g. `tailscale serve`), browsers won't embed http pages, so use "Open ↗".
 
+## Chat view and notifications
+
+On a phone a session opens in **Chat**: your messages, Claude's replies (rendered Markdown), and its tool calls as compact rows you can tap to see input and output. It is read from Claude Code's own transcript (`~/.claude/projects/…`), so it always matches the terminal, which stays one tab away. On desktop, switch the left pane between Terminal and Chat.
+
+The bell turns on **push notifications** for that device: one when a session needs you (a permission prompt or a question) and one when Claude finishes a turn. They use standard Web Push with keys the server generates (`~/.remote-ai/vapid.json`); payloads are end-to-end encrypted, so the browser's push service only relays ciphertext. Push needs a secure page, so open the dashboard over https (`tailscale serve`) or on localhost. On iPhone, add the page to the Home Screen first and turn notifications on from there.
+
 ## Updating
 
 ```bash
@@ -117,5 +123,5 @@ The server needs Linux (tmux), so develop inside WSL2 or on the server itself.
 
 - [x] Phase 1: projects and worktree sessions, live terminal, hook-driven status, approval buttons, phone key bar and composer
 - [x] Phase 2: per-project dev servers and setup, streaming logs, port detection and page preview
-- [ ] Phase 3: phone chat view built from the session transcript, push notifications
+- [x] Phase 3: phone chat view built from the session transcript, push notifications
 - [ ] Phase 4: setup script (Tailscale, systemd service), optional auth

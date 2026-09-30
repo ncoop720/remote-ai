@@ -17,6 +17,8 @@ export interface Config {
   /** First dev-server port; each session gets a block of `portStep` ports. */
   portBase: number;
   portStep: number;
+  /** Contact URL or mailto: sent to push services with each notification (VAPID "sub"). */
+  pushSubject: string;
 }
 
 export function expandHome(p: string): string {
@@ -46,5 +48,6 @@ export function loadConfig(): Config {
     claudeCommand: env.REMOTE_AI_CLAUDE_COMMAND ?? file.claudeCommand ?? 'claude',
     portBase: Number(env.REMOTE_AI_PORT_BASE ?? file.portBase ?? 3100),
     portStep: Number(file.portStep ?? 10),
+    pushSubject: env.REMOTE_AI_PUSH_SUBJECT ?? file.pushSubject ?? 'https://github.com/ncoop720/remote-ai',
   };
 }

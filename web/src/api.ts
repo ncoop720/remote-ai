@@ -40,6 +40,9 @@ export const api = {
   dev: (id: string, action: DevAction, name?: string) =>
     request<void>('POST', `${session(id)}/dev/${action}${name ? `?name=${encodeURIComponent(name)}` : ''}`),
   logsUrl: (id: string, name: string) => `${session(id)}/logs/${encodeURIComponent(name)}`,
+  pushInfo: () => request<{ publicKey: string; subscriptions: number }>('GET', '/api/push'),
+  pushSubscribe: (subscription: PushSubscriptionJSON) => request<{ ok: boolean }>('POST', '/api/push/subscribe', { subscription }),
+  pushUnsubscribe: (endpoint: string) => request<void>('POST', '/api/push/unsubscribe', { endpoint }),
 };
 
 export function errorMessage(err: unknown): string {
