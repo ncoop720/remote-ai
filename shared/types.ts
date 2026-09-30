@@ -29,6 +29,31 @@ export interface TmuxWindow {
   command: string;
 }
 
+export interface DevServerInfo {
+  name: string;
+  /** Port the dashboard assigned; the command sees it as $PORT. Null until first started. */
+  port: number | null;
+  state: 'running' | 'stopped';
+  command: string;
+  cwd: string;
+}
+
+export type SetupState = 'none' | 'pending' | 'running' | 'done' | 'failed';
+
+export interface DevInfo {
+  /** Where the dev config came from: .remote-ai.json, a guess from package.json, or nowhere. */
+  source: 'file' | 'default' | 'none';
+  error?: string;
+  setup: SetupState;
+  servers: DevServerInfo[];
+}
+
+export interface ListeningPort {
+  port: number;
+  pid: number;
+  command: string;
+}
+
 export interface SessionInfo {
   /** Stable id, also the tmux session name: `<project>__<branch>`. */
   id: string;
@@ -43,7 +68,12 @@ export interface SessionInfo {
   ahead: number | null;
   base: string | null;
   status: SessionStatus;
+  dev: DevInfo;
+  /** Ports that processes running inside this worktree are listening on. */
+  ports: ListeningPort[];
 }
+
+export type DevAction = 'start' | 'stop' | 'restart' | 'setup';
 
 export interface ProjectInfo {
   name: string;

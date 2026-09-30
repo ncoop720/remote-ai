@@ -52,10 +52,12 @@ export function buildClaudeCommand(opts: {
   permissionMode?: PermissionMode;
   resume?: boolean;
   prompt?: string;
+  appendSystemPrompt?: string;
 }): string {
   const parts = [opts.claudeCommand, '--settings', shellQuote(opts.settingsPath)];
   // Always explicit when chosen: leaving it out falls back to the user's configured default, which may be auto.
   if (opts.permissionMode) parts.push('--permission-mode', opts.permissionMode);
+  if (opts.appendSystemPrompt) parts.push('--append-system-prompt', shellQuote(opts.appendSystemPrompt));
   if (opts.resume) parts.push('--continue');
   if (opts.prompt?.trim()) parts.push(shellQuote(opts.prompt.trim()));
   return parts.join(' ');

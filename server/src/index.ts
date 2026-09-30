@@ -8,13 +8,17 @@ import { loadConfig } from './config.js';
 import { CommandError } from './exec.js';
 import { isValidWindowName } from './ids.js';
 import { loadHookToken, PERMISSION_MODES, writeClaudeSettings } from './claude.js';
+import { DevManager } from './dev.js';
+import { HttpError } from './errors.js';
 import { EventHub } from './events.js';
-import { HttpError, SessionManager } from './sessions.js';
+import { streamLog } from './logs.js';
+import { listeningPorts } from './ports.js';
+import { SessionManager } from './sessions.js';
 import { StateStore } from './state.js';
 import { StatusStore, type HookPayload } from './status.js';
 import { attachTerminal } from './terminal.js';
 import { Tmux } from './tmux.js';
-import type { CreateSessionRequest, StartSessionRequest } from '../../shared/types.js';
+import type { CreateSessionRequest, DevAction, StartSessionRequest } from '../../shared/types.js';
 
 const cfg = loadConfig();
 const tmux = new Tmux(cfg.tmuxSocket, cfg.dataDir);
@@ -22,7 +26,8 @@ const state = new StateStore(cfg.dataDir, cfg.portBase, cfg.portStep);
 const statuses = new StatusStore();
 const hookToken = loadHookToken(cfg.dataDir);
 const settingsPath = writeClaudeSettings(cfg.dataDir, cfg.port, hookToken);
-const sessions = new SessionManager(cfg, tmux, state, statuses, settingsPath);
+const dev = new DevManager(cfg, tmux, state);
+const sessions = new SessionManager(cfg, tmux, state, statuses, settingsPath, dev);
 const hub = new EventHub();
 
 const app = Fastify({ logger: { level: process.env.LOG_LEVEL ?? 'info' }, bodyLimit: 8 * 1024 * 1024 });
@@ -130,6 +135,26 @@ app.post<{ Params: { id: string }; Body: { key: string } }>('/api/sessions/:id/a
   return { ok: true };
 });
 
+const DEV_ACTIONS: readonly DevAction[] = ['start', 'stop', 'restart', 'setup'];
+
+// Also called by Claude itself (see DevManager.describeForClaude), so the server name can go in the query string.
+app.post<{ Params: { id: string; action: string }; Querystring: { name?: string } }>(
+  '/api/sessions/:id/dev/:action',
+  async (req) => {
+    const action = req.params.action as DevAction;
+    if (!DEV_ACTIONS.includes(action)) throw new HttpError(404, `Unknown action ${action}`);
+    await sessions.devAction(req.params.id, action, req.query.name || undefined);
+    hub.broadcast({ type: 'sessions' });
+    return { ok: true };
+  },
+);
+
+app.get<{ Params: { id: string; name: string } }>('/api/sessions/:id/logs/:name', async (req, reply) => {
+  const file = await sessions.logPath(req.params.id, req.params.name);
+  streamLog(reply, file);
+  return reply;
+});
+
 // Claude Code hooks post here (see claude.ts). Always answer 204 quickly; hooks must never block Claude.
 app.post<{ Body: HookPayload }>('/api/hook', async (req, reply) => {
   if (req.headers['x-remote-ai-token'] !== hookToken) return reply.code(401).send();
@@ -168,27 +193,34 @@ const webDir = [path.resolve(here, '../../web'), path.resolve(here, '../../../di
   fs.existsSync(path.join(d, 'index.html')),
 );
 if (webDir) {
-  await app.register(fastifyStatic, { root: webDir, wildcard: false });
+  // Files are looked up per request (not registered at startup), so `npm run build` while the
+  // server runs takes effect on the next page load; index.html is revalidated every time.
+  await app.register(fastifyStatic, { root: webDir });
   app.setNotFoundHandler((req, reply) => {
     if (req.url.startsWith('/api/') || req.url.startsWith('/ws/')) return reply.code(404).send({ error: 'Not found' });
     return reply.sendFile('index.html');
   });
 }
 
-// Sessions can end outside the dashboard (e.g. `exit` in the last window), so poll tmux.
-let lastRunning = '';
+// Things change outside the dashboard: a session's last window exits, a dev server crashes back to
+// its shell, a process starts listening. Poll cheaply and tell browsers when anything moved.
+let lastSignature = '';
 setInterval(async () => {
   try {
-    const names = (await tmux.listSessions()).map((s) => s.name).sort().join(',');
-    if (names !== lastRunning) {
-      lastRunning = names;
+    const [windows, ports] = await Promise.all([tmux.listWindows(), listeningPorts()]);
+    const signature = JSON.stringify([
+      [...windows.entries()].sort(([a], [b]) => a.localeCompare(b)),
+      ports.map((p) => `${p.port}:${p.pid}`),
+    ]);
+    if (signature !== lastSignature) {
+      lastSignature = signature;
       sessions.invalidate();
       hub.broadcast({ type: 'sessions' });
     }
   } catch {
     // tmux unavailable; the next request will surface the error
   }
-}, 5000).unref();
+}, 3000).unref();
 
 await app.listen({ host: cfg.host, port: cfg.port });
 app.log.info(`projects: ${cfg.projectsDir}  worktrees: ${cfg.worktreesDir}  tmux socket: ${cfg.tmuxSocket}`);

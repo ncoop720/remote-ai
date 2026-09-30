@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { api, errorMessage } from '../api';
 import { navigate, routes } from '../hooks';
 import type { PermissionMode, SessionInfo } from '../../../shared/types';
+import { DevPanel, LogsView, PreviewView } from './DevViews';
 import { ChevronLeft, Play, Stop, Trash } from './icons';
 import { MobileControls } from './MobileControls';
 import { PromptCard } from './PromptCard';
@@ -92,6 +93,10 @@ export function SessionView({ session, isDesktop, onChanged }: {
 }) {
   const [error, setError] = useState<string | null>(null);
   const [needsForce, setNeedsForce] = useState(false);
+  const [tab, setTab] = useState<Tab>('terminal');
+  const [devToggled, setDevToggled] = useState<boolean | null>(null);
+  const showDev = devToggled ?? hasDevContent(session);
+  const runningServers = session.dev.servers.filter((s) => s.state === 'running').length;
 
   const act = async (fn: () => Promise<void>) => {
     setError(null);
@@ -128,6 +133,11 @@ export function SessionView({ session, isDesktop, onChanged }: {
           {isDesktop ? <Meta session={session} /> : <div className="session-meta">{session.project}</div>}
         </div>
         <div className="session-actions">
+          {isDesktop && session.running && (
+            <button type="button" className="btn" aria-pressed={showDev} onClick={() => setDevToggled(!showDev)}>
+              {showDev ? 'Hide preview & logs' : 'Preview & logs'}
+            </button>
+          )}
           {session.running && (
             <ConfirmButton label="Stop" confirmLabel="Stop session?" icon={<Stop size={14} />} onConfirm={() => void act(() => api.stop(session.id))} />
           )}
@@ -148,15 +158,57 @@ export function SessionView({ session, isDesktop, onChanged }: {
         </div>
       )}
 
-      {session.running ? (
-        <div className="session-body">
-          <Terminal key={session.id} sessionId={session.id} fontSize={isDesktop ? 13 : 12} />
-          <PromptCard session={session} />
-          {!isDesktop && <MobileControls sessionId={session.id} />}
+      {!session.running ? (
+        <StoppedPanel session={session} onChanged={onChanged} />
+      ) : isDesktop ? (
+        <div className="session-split">
+          <div className="session-body">
+            <Terminal key={session.id} sessionId={session.id} fontSize={13} />
+            <PromptCard session={session} />
+          </div>
+          {showDev && <DevPanel session={session} />}
         </div>
       ) : (
-        <StoppedPanel session={session} onChanged={onChanged} />
+        <>
+          <nav className="tabs" aria-label="Session views">
+            {TABS.map((t) => (
+              <button key={t.id} type="button" aria-pressed={tab === t.id} onClick={() => setTab(t.id)}>
+                {t.label}
+                {t.id === 'logs' && runningServers > 0 && <span className="tab-count">{runningServers}</span>}
+                {t.id === 'preview' && session.ports.length > 0 && <span className="tab-count">{session.ports.length}</span>}
+              </button>
+            ))}
+          </nav>
+          {/* The terminal stays mounted so switching tabs doesn't drop its connection. */}
+          <div className="session-body" hidden={tab !== 'terminal'}>
+            <Terminal key={session.id} sessionId={session.id} fontSize={12} />
+            <PromptCard session={session} />
+            <MobileControls sessionId={session.id} />
+          </div>
+          {tab === 'logs' && (
+            <div className="session-body">
+              <LogsView session={session} />
+            </div>
+          )}
+          {tab === 'preview' && (
+            <div className="session-body">
+              <PreviewView session={session} isDesktop={false} />
+            </div>
+          )}
+        </>
       )}
     </div>
   );
+}
+
+const TABS = [
+  { id: 'terminal', label: 'Terminal' },
+  { id: 'logs', label: 'Logs' },
+  { id: 'preview', label: 'Preview' },
+] as const;
+type Tab = (typeof TABS)[number]['id'];
+
+/** Show the dev panel by default only when there is something in it. */
+function hasDevContent(session: SessionInfo): boolean {
+  return session.dev.servers.length > 0 || session.dev.setup !== 'none' || session.ports.length > 0 || Boolean(session.dev.error);
 }

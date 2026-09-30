@@ -1,5 +1,6 @@
 import type {
   CreateSessionRequest,
+  DevAction,
   ProjectInfo,
   StartSessionRequest,
   VisiblePrompt,
@@ -36,6 +37,9 @@ export const api = {
   text: (id: string, text: string, submit = true) => request<void>('POST', `${session(id)}/text`, { text, submit }),
   prompt: (id: string) => request<{ prompt: VisiblePrompt | null }>('GET', `${session(id)}/prompt`),
   answer: (id: string, key: string) => request<void>('POST', `${session(id)}/answer`, { key }),
+  dev: (id: string, action: DevAction, name?: string) =>
+    request<void>('POST', `${session(id)}/dev/${action}${name ? `?name=${encodeURIComponent(name)}` : ''}`),
+  logsUrl: (id: string, name: string) => `${session(id)}/logs/${encodeURIComponent(name)}`,
 };
 
 export function errorMessage(err: unknown): string {

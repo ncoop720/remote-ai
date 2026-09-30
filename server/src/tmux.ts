@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { CommandError, run } from './exec.js';
+import { CommandError, run, shellQuote } from './exec.js';
 import type { TmuxWindow } from '../../shared/types.js';
 
 export interface TmuxSession {
@@ -13,6 +13,9 @@ export interface TmuxSession {
 const SEP = '\u001f';
 const SESSION_FORMAT = ['#{session_name}', '#{session_windows}', '#{session_attached}', '#{session_path}'].join(SEP);
 const WINDOW_FORMAT = ['#{session_name}', '#{window_index}', '#{window_name}', '#{pane_current_command}'].join(SEP);
+
+/** A pane whose foreground program is one of these is sitting at a prompt, not running anything. */
+export const SHELLS = new Set(['bash', 'zsh', 'sh', 'dash', 'fish']);
 
 /** Viewer sessions (one per open browser terminal) contain `~` and are hidden from listings. */
 export function isViewerSession(name: string): boolean {
@@ -127,8 +130,19 @@ export class Tmux {
     ]);
   }
 
-  async newWindow(session: string, window: string, cwd: string): Promise<void> {
-    await this.exec(['new-window', '-d', '-t', `=${session}:`, '-n', window, '-c', cwd]);
+  async newWindow(session: string, window: string, cwd: string, env: Record<string, string> = {}): Promise<void> {
+    const envArgs = Object.entries(env).flatMap(([k, v]) => ['-e', `${k}=${v}`]);
+    await this.exec(['new-window', '-d', '-t', `=${session}:`, '-n', window, '-c', cwd, ...envArgs]);
+  }
+
+  async killWindow(target: string): Promise<void> {
+    await this.exec(['kill-window', '-t', target]);
+  }
+
+  /** Append everything the pane prints to `file`, replacing any earlier pipe (which may point at a rotated file). */
+  async pipeToFile(target: string, file: string): Promise<void> {
+    await this.exec(['pipe-pane', '-t', target]);
+    await this.exec(['pipe-pane', '-t', target, `exec cat >> ${shellQuote(file)}`]);
   }
 
   async killSession(name: string): Promise<void> {

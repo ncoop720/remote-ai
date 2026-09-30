@@ -14,7 +14,7 @@
     "build": "vite build && tsc -p server",
     "start": "node dist/server/src/index.js",
     "typecheck": "tsc -p server --noEmit && tsc -p web --noEmit",
-    "test": "node --import tsx --test \"server/src/**/*.test.ts\""
+    "test": "node --import tsx --test \"server/src/**/*.test.ts\" \"web/src/**/*.test.ts\""
   },
   "dependencies": {
     "@fastify/static": "^10.1.5",

@@ -57,6 +57,37 @@ tailscale serve --bg 8787
 
 Don't expose the dashboard to the public internet: anyone who can open it gets a shell on the machine.
 
+## Dev servers, logs and preview
+
+Describe a project's dev servers in `.remote-ai.json` at the repo root:
+
+```json
+{
+  "setup": ["npm ci --prefix server", "npm ci --prefix client"],
+  "servers": [
+    { "name": "server", "cwd": "server", "command": "npm start" },
+    { "name": "client", "cwd": "client", "command": "npm run dev -- --port $PORT --strictPort" }
+  ]
+}
+```
+
+- **setup** runs once in every new worktree (each command from the worktree root), in a `setup` tmux window that closes itself when it succeeds. Rerun it from the Logs panel.
+- **servers** each run in their own tmux window (`dev-<name>`). A server gets `$PORT`, and every command gets `$PORT_<NAME>` for all servers, so a frontend can find its backend. Ports come from the session's block (3100–3109 for the first worktree, 3110–3119 for the next, …).
+- The file can be committed, or left uncommitted in the main checkout: worktrees without their own copy use the main checkout's.
+- Without a config file, a repo whose `package.json` has a `dev` script gets `npm run dev` (and `npm ci` as setup).
+
+Output goes to `~/.remote-ai/logs/<session>/<name>.log` and streams to the Logs panel, where you can pick lines and paste them into Claude's prompt. Claude is told about the servers, their ports and log files (via `--append-system-prompt`), and how to restart them, so it reads the logs instead of starting its own copies.
+
+The Preview panel shows any port a process inside the worktree listens on, at `http://<the host you opened the dashboard on>:<port>`. Dev servers that only listen on localhost can be previewed from the machine itself; to preview them from your phone they need to listen on all interfaces (for Vite, `--host`). When the dashboard itself is served over https (e.g. `tailscale serve`), browsers won't embed http pages, so use "Open ↗".
+
+## Updating
+
+```bash
+cd ~/code/remote-ai && git pull && npm ci && npm run build
+```
+
+Web changes apply on the next page load. Server changes need `npm start` restarted; Claude sessions and dev servers keep running in tmux, and open pages reconnect by themselves.
+
 ## Configuration
 
 Set environment variables, or put the same keys (camelCase) in `~/.remote-ai/config.json`.
@@ -85,6 +116,6 @@ The server needs Linux (tmux), so develop inside WSL2 or on the server itself.
 ## Roadmap
 
 - [x] Phase 1: projects and worktree sessions, live terminal, hook-driven status, approval buttons, phone key bar and composer
-- [ ] Phase 2: dev server per session (`server` tmux window), streaming logs, port detection and page preview
+- [x] Phase 2: per-project dev servers and setup, streaming logs, port detection and page preview
 - [ ] Phase 3: phone chat view built from the session transcript, push notifications
 - [ ] Phase 4: setup script (Tailscale, systemd service), optional auth
