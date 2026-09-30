@@ -34,26 +34,37 @@ A Linux machine (a VPS, or WSL2 on Windows) with:
 - Build tools for `node-pty`: `sudo apt install build-essential python3`
 - Claude Code, logged in (`claude` then `/login`)
 
-## Install and run
+## Install
 
 ```bash
-git clone https://github.com/ncoop720/remote-ai.git
-cd remote-ai
-npm install
-npm run build
-npm start            # http://127.0.0.1:8787
+git clone https://github.com/ncoop720/remote-ai.git ~/code/remote-ai
+~/code/remote-ai/scripts/install.sh
 ```
+
+The script checks the requirements, builds, and installs a **systemd user service** (`remote-ai`) that starts at boot and restarts on failure. Stopping or restarting the service never touches your sessions: Claude runs in tmux, outside the service (`KillMode=process`). Logs: `journalctl --user -u remote-ai -f`.
+
+Options: `--tailscale` (serve it on your tailnet), `--wsl-autostart` (WSL only, see below), `--port N`, `--no-service` (just build; run `npm start` yourself), `--uninstall`.
 
 Clone the repositories you want to work on into `~/projects`. Each one shows up as a project.
 
+### On Windows (WSL2)
+
+Run the same commands inside Ubuntu. WSL needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`, the default on recent Ubuntu images) and, because it stops a distro shortly after its last terminal closes, `--wsl-autostart` keeps it running: it sets `instanceIdleTimeout=-1` in `%UserProfile%\.wslconfig` and adds a hidden Windows startup entry that boots the distro when you log in. With `networkingMode=mirrored` in `.wslconfig`, Ubuntu and Windows share `localhost`, so dev servers and databases on either side can reach each other.
+
 ### Reaching it from your phone
 
-The server listens on localhost only. Use [Tailscale](https://tailscale.com) to reach it from your other devices without opening any ports:
+The server listens on localhost only. Use [Tailscale](https://tailscale.com) to reach it from your other devices without opening any ports: install it on the machine (on Windows for WSL) and on your phone, turn on HTTPS in the Tailscale admin console, then:
 
 ```bash
 tailscale serve --bg 8787
 # → https://<machine>.<tailnet>.ts.net
 ```
+
+Https matters: it's what lets the phone install the dashboard as an app and receive push notifications.
+
+### Password (optional)
+
+Set `REMOTE_AI_PASSWORD` (or `"password"` in `~/.remote-ai/config.json`) to require a login for requests that arrive through a proxy such as `tailscale serve` or from another machine. Requests made on the machine itself are trusted, since anything that can make them can already run tmux and git. Logins last 30 days.
 
 Don't expose the dashboard to the public internet: anyone who can open it gets a shell on the machine.
 
@@ -88,11 +99,13 @@ The bell turns on **push notifications** for that device: one when a session nee
 
 ## Updating
 
+Use **Check for updates** at the bottom of the sidebar (or the session list on a phone). It pulls, reinstalls dependencies if they changed, rebuilds, and, when running as the service, restarts the server. Claude sessions and dev servers keep running in tmux, and open pages reconnect by themselves. By hand:
+
 ```bash
-cd ~/code/remote-ai && git pull && npm ci && npm run build
+cd ~/code/remote-ai && git pull && npm ci && npm run build && systemctl --user restart remote-ai
 ```
 
-Web changes apply on the next page load. Server changes need `npm start` restarted; Claude sessions and dev servers keep running in tmux, and open pages reconnect by themselves.
+Web-only changes apply on the next page load, without a restart.
 
 ## Configuration
 
@@ -124,4 +137,4 @@ The server needs Linux (tmux), so develop inside WSL2 or on the server itself.
 - [x] Phase 1: projects and worktree sessions, live terminal, hook-driven status, approval buttons, phone key bar and composer
 - [x] Phase 2: per-project dev servers and setup, streaming logs, port detection and page preview
 - [x] Phase 3: phone chat view built from the session transcript, push notifications
-- [ ] Phase 4: setup script (Tailscale, systemd service), optional auth
+- [x] Phase 4: install script (systemd service, Tailscale, WSL autostart), optional password, self-update

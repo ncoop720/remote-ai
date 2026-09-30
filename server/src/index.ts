@@ -4,7 +4,9 @@ import { fileURLToPath } from 'node:url';
 import Fastify from 'fastify';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
+import { Auth } from './auth.js';
 import { loadConfig } from './config.js';
+import { installRoot, update, versionInfo } from './update.js';
 import { CommandError } from './exec.js';
 import { isValidWindowName } from './ids.js';
 import { loadHookToken, PERMISSION_MODES, writeClaudeSettings } from './claude.js';
@@ -29,6 +31,7 @@ const statuses = new StatusStore();
 const hookToken = loadHookToken(cfg.dataDir);
 const settingsPath = writeClaudeSettings(cfg.dataDir, cfg.port, hookToken);
 const dev = new DevManager(cfg, tmux, state);
+const auth = new Auth(cfg.dataDir, cfg.password);
 const sessions = new SessionManager(cfg, tmux, state, statuses, settingsPath, dev);
 const hub = new EventHub();
 
@@ -84,6 +87,54 @@ app.addHook('onRequest', async (req, reply) => {
   }
   const hosts = [req.headers.host, req.headers['x-forwarded-host']].flat().filter(Boolean);
   if (!hosts.includes(originHost)) return reply.code(403).send({ error: 'Cross-origin request blocked' });
+});
+
+// The page itself loads without a login (it shows the login form); the API and terminals need one.
+const OPEN_PATHS = new Set(['/api/health', '/api/auth', '/api/login', '/api/logout', '/api/hook']);
+app.addHook('onRequest', async (req, reply) => {
+  const url = req.url.split('?')[0]!;
+  if (!url.startsWith('/api/') && !url.startsWith('/ws/')) return;
+  if (OPEN_PATHS.has(url) || auth.allowed(req)) return;
+  return reply.code(401).send({ error: 'Log in first' });
+});
+
+app.get('/api/auth', async (req) => ({ required: auth.enabled && !auth.allowed(req), enabled: auth.enabled }));
+
+app.post<{ Body: { password?: string } }>('/api/login', async (req, reply) => {
+  const result = auth.login(req, reply, req.body?.password);
+  if (result === 'limited') return reply.code(429).send({ error: 'Too many attempts; wait a few minutes' });
+  if (result === 'wrong') return reply.code(401).send({ error: 'Wrong password' });
+  return { ok: true };
+});
+
+app.post('/api/logout', async (req, reply) => {
+  auth.logout(req, reply);
+  return { ok: true };
+});
+
+// ---- Updates ----
+
+const root = installRoot(path.dirname(fileURLToPath(import.meta.url)));
+
+app.get<{ Querystring: { fetch?: string } }>('/api/version', async (req) => {
+  if (!root) throw new HttpError(404, 'Not running from a git checkout');
+  return versionInfo(root, req.query.fetch === '1');
+});
+
+let updating = false;
+app.post('/api/update', async () => {
+  if (!root) throw new HttpError(404, 'Not running from a git checkout');
+  if (updating) throw new HttpError(409, 'An update is already running');
+  updating = true;
+  try {
+    const result = await update(root);
+    // Under systemd (Restart=always) exiting is a restart. Sessions live in tmux, so they carry on.
+    const restarting = result.ok && result.restartNeeded && Boolean(process.env.INVOCATION_ID);
+    if (restarting) setTimeout(() => process.exit(0), 500);
+    return { ...result, restarting };
+  } finally {
+    updating = false;
+  }
 });
 
 // ---- API ----

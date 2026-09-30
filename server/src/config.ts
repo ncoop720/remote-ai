@@ -19,6 +19,8 @@ export interface Config {
   portStep: number;
   /** Contact URL or mailto: sent to push services with each notification (VAPID "sub"). */
   pushSubject: string;
+  /** When set, requests that reach the server through a proxy or the network must log in. */
+  password?: string;
 }
 
 export function expandHome(p: string): string {
@@ -49,5 +51,6 @@ export function loadConfig(): Config {
     portBase: Number(env.REMOTE_AI_PORT_BASE ?? file.portBase ?? 3100),
     portStep: Number(file.portStep ?? 10),
     pushSubject: env.REMOTE_AI_PUSH_SUBJECT ?? file.pushSubject ?? 'https://github.com/ncoop720/remote-ai',
+    password: env.REMOTE_AI_PASSWORD || file.password || undefined,
   };
 }

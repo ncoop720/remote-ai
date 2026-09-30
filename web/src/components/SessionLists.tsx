@@ -4,6 +4,7 @@ import { groupOf, subtitle, type StatusGroup } from '../status';
 import type { ProjectInfo, SessionInfo } from '../../../shared/types';
 import { ChevronRight, Folder, Plus } from './icons';
 import { NotificationsButton } from './NotificationsButton';
+import { UpdatePanel } from './UpdatePanel';
 import { StatusDot } from './StatusDot';
 
 /** Desktop sidebar: sessions grouped by project. */
@@ -46,6 +47,7 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
         ))}
         {projects.length === 0 && <EmptyProjects />}
       </div>
+      <UpdatePanel />
     </nav>
   );
 }
@@ -97,6 +99,7 @@ export function MobileSessionList({ projects }: { projects: ProjectInfo[] }) {
           </section>
         );
       })}
+      <UpdatePanel />
       <a className="fab" href={routes.newSession(filter ?? undefined)}>
         <Plus size={18} /> New session
       </a>

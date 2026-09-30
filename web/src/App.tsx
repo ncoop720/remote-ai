@@ -1,9 +1,31 @@
+import { useEffect, useState } from 'react';
+import { api } from './api';
 import { useMediaQuery, useProjects, useRoute } from './hooks';
+import { Login } from './components/Login';
 import { NewSession } from './components/NewSession';
 import { MobileSessionList, Sidebar } from './components/SessionLists';
 import { SessionView } from './components/SessionView';
 
+/** Shows the login form when the server has a password and this browser isn't logged in. */
 export function App() {
+  const [auth, setAuth] = useState<'checking' | 'ok' | 'login'>('checking');
+
+  useEffect(() => {
+    api
+      .auth()
+      .then((a) => setAuth(a.required ? 'login' : 'ok'))
+      .catch(() => setAuth('ok'));
+    const onRequired = () => setAuth('login');
+    window.addEventListener('ra-login-required', onRequired);
+    return () => window.removeEventListener('ra-login-required', onRequired);
+  }, []);
+
+  if (auth === 'checking') return <div className="splash">Loading…</div>;
+  if (auth === 'login') return <Login onDone={() => window.location.reload()} />;
+  return <Dashboard />;
+}
+
+function Dashboard() {
   const { projects, error, refresh } = useProjects();
   const route = useRoute();
   const isDesktop = useMediaQuery('(min-width: 900px)');

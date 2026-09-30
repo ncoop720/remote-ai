@@ -12,6 +12,7 @@ async function request<T>(method: string, url: string, body?: unknown): Promise<
     headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+  if (res.status === 401 && url !== '/api/login') window.dispatchEvent(new Event('ra-login-required'));
   if (!res.ok) {
     let message = `${res.status} ${res.statusText}`;
     try {
@@ -43,7 +44,29 @@ export const api = {
   pushInfo: () => request<{ publicKey: string; subscriptions: number }>('GET', '/api/push'),
   pushSubscribe: (subscription: PushSubscriptionJSON) => request<{ ok: boolean }>('POST', '/api/push/subscribe', { subscription }),
   pushUnsubscribe: (endpoint: string) => request<void>('POST', '/api/push/unsubscribe', { endpoint }),
+  auth: () => request<{ required: boolean; enabled: boolean }>('GET', '/api/auth'),
+  login: (password: string) => request<{ ok: boolean }>('POST', '/api/login', { password }),
+  logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
+  version: (fetchUpstream = false) => request<VersionInfo>('GET', `/api/version${fetchUpstream ? '?fetch=1' : ''}`),
+  update: () => request<UpdateResult>('POST', '/api/update'),
 };
+
+export interface VersionInfo {
+  commit: string;
+  branch: string;
+  behind: number | null;
+  dirty: boolean;
+  managed: boolean;
+}
+
+export interface UpdateResult {
+  ok: boolean;
+  from: string;
+  to: string;
+  restartNeeded: boolean;
+  restarting: boolean;
+  log: string[];
+}
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
