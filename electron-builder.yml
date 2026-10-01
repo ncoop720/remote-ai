@@ -16,6 +16,9 @@ npmRebuild: false
 extraResources:
   - from: dist/host-runtime/${os}-${arch}
     to: host
+  # Built-in Tailscale; runs while the app does.
+  - from: dist/tailscale/${os}-${arch}
+    to: tailscale
 mac:
   target: [dmg, zip] # electron-updater installs from the zip
   category: public.app-category.developer-tools

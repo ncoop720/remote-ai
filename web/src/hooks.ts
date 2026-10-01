@@ -54,6 +54,7 @@ export function useProjects() {
 export type Route =
   | { name: 'home' }
   | { name: 'setup' }
+  | { name: 'connect' }
   | { name: 'session'; id: string }
   | { name: 'new'; project?: string };
 
@@ -62,6 +63,7 @@ function parseHash(hash: string): Route {
   if (parts[0] === 's' && parts[1]) return { name: 'session', id: parts[1] };
   if (parts[0] === 'new') return { name: 'new', project: parts[1] || undefined };
   if (parts[0] === 'setup') return { name: 'setup' };
+  if (parts[0] === 'connect') return { name: 'connect' };
   return { name: 'home' };
 }
 
@@ -82,6 +84,7 @@ export function navigate(path: string): void {
 export const routes = {
   home: () => '#/',
   setup: () => '#/setup',
+  connect: () => '#/connect',
   session: (id: string) => `#/s/${encodeURIComponent(id)}`,
   newSession: (project?: string) => (project ? `#/new/${encodeURIComponent(project)}` : '#/new'),
 };

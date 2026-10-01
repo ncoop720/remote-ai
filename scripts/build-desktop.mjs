@@ -4,11 +4,14 @@
 //   dist/host-runtime/<os>-<arch>/    the session host: Node, its script (host.mjs) and node-pty
 //                                     (vendor/), shipped as a resource and copied out of the app
 //                                     when it runs
+//   dist/tailscale/<os>-<arch>/       built-in Tailscale (the Go program in tailscale/)
 //
-//   node scripts/build-desktop.mjs [--targets linux-x64,mac-arm64,...] [--skip-web]
+//   node scripts/build-desktop.mjs [--targets linux-x64,mac-arm64,...] [--skip-web] [--skip-tailscale]
 //
 // Targets default to this machine. node-pty ships prebuilt binaries for macOS and Windows; Linux
-// uses the one npm built here, so a Linux target must match this machine.
+// uses the one npm built here, so a Linux target must match this machine. Go cross-compiles, so the
+// Tailscale program builds for any target; without Go on PATH, a Go release is downloaded into the
+// build cache.
 import { execFileSync } from 'node:child_process';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
@@ -242,7 +245,69 @@ async function buildRuntime(target, hostScript, nodeVersion) {
   console.log(`  ${target}: Node ${nodeVersion}, node-pty ${nodePty}, runtime ${hash}`);
 }
 
+// ---- Built-in Tailscale ----
+
+const GO_OS = { mac: 'darwin', win: 'windows', linux: 'linux' };
+const GO_ARCH = { x64: 'amd64', arm64: 'arm64' };
+
+/** `go` from PATH, or the newest Go release in the build cache (downloaded and checked if need be). */
+async function goToolchain() {
+  try {
+    execFileSync('go', ['version'], { stdio: 'ignore' });
+    return { go: 'go', env: {} };
+  } catch {
+    // not installed
+  }
+  const goDir = path.join(cacheRoot, 'go');
+  const exe = process.platform === 'win32' ? 'go.exe' : 'go';
+  const binOf = (version) => path.join(goDir, version, 'go', 'bin', exe);
+  // Its module and build caches stay in the build cache too.
+  const env = { GOPATH: path.join(cacheRoot, 'gopath'), GOCACHE: path.join(cacheRoot, 'gocache'), GOTOOLCHAIN: 'local' };
+  let release;
+  try {
+    [release] = await (await fetch('https://go.dev/dl/?mode=json')).json();
+  } catch (err) {
+    const cached = (fs.existsSync(goDir) ? fs.readdirSync(goDir) : []).filter((v) => fs.existsSync(binOf(v))).sort().reverse();
+    if (cached[0]) return { go: binOf(cached[0]), env };
+    throw err;
+  }
+  if (fs.existsSync(binOf(release.version))) return { go: binOf(release.version), env };
+
+  const goos = { darwin: 'darwin', win32: 'windows', linux: 'linux' }[process.platform];
+  const file = release.files.find((f) => f.os === goos && f.arch === GO_ARCH[process.arch] && f.kind === 'archive');
+  if (!file) throw new Error(`No Go download for ${process.platform}-${process.arch}`);
+  console.log(`  downloading ${file.filename}`);
+  const res = await fetch(`https://go.dev/dl/${file.filename}`);
+  if (!res.ok) throw new Error(`Downloading ${file.filename}: ${res.status}`);
+  const data = Buffer.from(await res.arrayBuffer());
+  if (crypto.createHash('sha256').update(data).digest('hex') !== file.sha256) throw new Error(`${file.filename} checksum mismatch`);
+  const dest = path.join(goDir, release.version);
+  fs.mkdirSync(dest, { recursive: true });
+  const archive = path.join(goDir, file.filename);
+  fs.writeFileSync(archive, data);
+  execFileSync('tar', ['-xf', archive, '-C', dest], { stdio: 'inherit' });
+  fs.rmSync(archive);
+  return { go: binOf(release.version), env };
+}
+
+async function buildTailscale(targets) {
+  step('built-in Tailscale');
+  const { go, env } = await goToolchain();
+  for (const target of targets) {
+    const [os_, arch] = target.split('-');
+    const out = r('dist/tailscale', target, os_ === 'win' ? 'remote-ai-tailscale.exe' : 'remote-ai-tailscale');
+    fs.rmSync(path.dirname(out), { recursive: true, force: true });
+    execFileSync(go, ['build', '-trimpath', '-ldflags=-s -w', '-o', out, '.'], {
+      cwd: r('tailscale'),
+      stdio: 'inherit',
+      env: { ...process.env, ...env, GOOS: GO_OS[os_], GOARCH: GO_ARCH[arch], CGO_ENABLED: '0' },
+    });
+    console.log(`  ${target}: ${(fs.statSync(out).size / 1e6).toFixed(1)} MB`);
+  }
+}
+
 await buildApp();
+if (!flag('--skip-tailscale')) await buildTailscale(targets);
 const hostScript = await buildHostScript();
 // The host runs on the current Node LTS line this project builds with, unless pinned.
 const nodeVersion = process.env.REMOTE_AI_HOST_NODE ?? (await latestNode(process.versions.node.split('.')[0]));

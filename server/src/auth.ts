@@ -2,6 +2,8 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type { FastifyReply, FastifyRequest } from 'fastify';
+import { DEVICE_COOKIE, DEVICE_MAX_AGE_S, type Devices } from './devices.js';
+import type { DeviceInfo } from '../../shared/types.js';
 
 export const COOKIE = 'ra_session';
 const MAX_AGE_S = 30 * 24 * 3600;
@@ -18,8 +20,8 @@ export function parseCookies(header: string | undefined): Record<string, string>
 
 /**
  * Requests made on this machine without going through a proxy. They are trusted: anything that
- * can make them can already use tmux and git directly. `tailscale serve` and other proxies
- * connect from loopback too, but mark the request with forwarding headers.
+ * can make them can already run programs as you. `tailscale serve`, the built-in Tailscale proxy
+ * and other proxies connect from loopback too, but mark the request with forwarding headers.
  */
 export function isLocalRequest(remoteAddress: string | undefined, headers: Record<string, unknown>): boolean {
   return (
@@ -32,22 +34,47 @@ export function isLocalRequest(remoteAddress: string | undefined, headers: Recor
 
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest();
 
-/** Optional password for remote access, with login sessions that survive restarts. */
+export interface AuthOptions {
+  password?: string;
+  /**
+   * Remote requests need a paired device (or the password). Without this and without a password,
+   * remote access is open, as in v1, where only a proxy such as `tailscale serve` exposed it.
+   */
+  requirePairing?: boolean;
+  /** The built-in Tailscale proxy marks its requests with this secret, and adds the sender's login. */
+  proxySecret?: string;
+  /** The Tailscale login this computer is signed in as. That person's own devices are trusted. */
+  tailnetOwner?: () => string | null;
+}
+
+export function isSecure(req: FastifyRequest): boolean {
+  return req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https';
+}
+
+/** Who may use the dashboard: this computer, paired devices, a logged-in password, or your own tailnet devices. */
 export class Auth {
   private readonly file: string;
   private sessions: Record<string, number>;
   private readonly failures = new Map<string, number[]>();
+  private readonly password: string | undefined;
 
   constructor(
     dataDir: string,
-    private readonly password: string | undefined,
+    private readonly devices: Devices,
+    private readonly opts: AuthOptions = {},
   ) {
+    this.password = opts.password;
     this.file = path.join(dataDir, 'auth-sessions.json');
     this.sessions = fs.existsSync(this.file) ? (JSON.parse(fs.readFileSync(this.file, 'utf8')) as Record<string, number>) : {};
   }
 
   get enabled(): boolean {
     return Boolean(this.password);
+  }
+
+  /** Remote access needs pairing or a password; otherwise it is open (the v1 default). */
+  get guarded(): boolean {
+    return this.enabled || Boolean(this.opts.requirePairing);
   }
 
   private save(): void {
@@ -67,8 +94,42 @@ export class Auth {
     return expires !== undefined && expires > Date.now();
   }
 
+  /** The paired device this request comes from, if any. */
+  device(req: FastifyRequest): DeviceInfo | null {
+    return this.devices.verify(parseCookies(req.headers.cookie)[DEVICE_COOKIE]);
+  }
+
+  /** The request came through the built-in Tailscale proxy (its secret is on it). */
+  viaTailscale(req: FastifyRequest): boolean {
+    const secret = this.opts.proxySecret;
+    const given = req.headers['x-remote-ai-proxy'];
+    return Boolean(secret) && typeof given === 'string' && given.length === secret!.length &&
+      crypto.timingSafeEqual(Buffer.from(given), Buffer.from(secret!));
+  }
+
+  /** Sent through the built-in Tailscale proxy by a device signed in as the same person as this computer. */
+  ownTailnetDevice(req: FastifyRequest): boolean {
+    const owner = this.opts.tailnetOwner?.();
+    const login = req.headers['x-remote-ai-tailscale-login'];
+    return Boolean(owner) && login === owner && this.viaTailscale(req);
+  }
+
   allowed(req: FastifyRequest): boolean {
-    return !this.enabled || isLocalRequest(req.socket.remoteAddress, req.headers) || this.loggedIn(req);
+    return (
+      isLocalRequest(req.socket.remoteAddress, req.headers) ||
+      this.device(req) !== null ||
+      this.loggedIn(req) ||
+      this.ownTailnetDevice(req) ||
+      !this.guarded
+    );
+  }
+
+  /** Set (or renew) a paired device's cookie. */
+  setDeviceCookie(req: FastifyRequest, reply: FastifyReply, value: string): void {
+    reply.header(
+      'Set-Cookie',
+      `${DEVICE_COOKIE}=${value}; Path=/; HttpOnly; SameSite=Lax; Max-Age=${DEVICE_MAX_AGE_S}${isSecure(req) ? '; Secure' : ''}`,
+    );
   }
 
   /** At most 10 wrong passwords per address per 15 minutes. */
@@ -89,10 +150,9 @@ export class Auth {
     const token = crypto.randomBytes(32).toString('base64url');
     this.sessions[this.tokenKey(token)] = Date.now() + MAX_AGE_S * 1000;
     this.save();
-    const secure = req.headers['x-forwarded-proto'] === 'https' || req.protocol === 'https';
     reply.header(
       'Set-Cookie',
-      `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${MAX_AGE_S}${secure ? '; Secure' : ''}`,
+      `${COOKIE}=${token}; Path=/; HttpOnly; SameSite=Strict; Max-Age=${MAX_AGE_S}${isSecure(req) ? '; Secure' : ''}`,
     );
     return 'ok';
   }

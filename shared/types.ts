@@ -185,6 +185,65 @@ export interface UpdateResult {
   log: string[];
 }
 
+/** A phone or browser paired with this computer. */
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  /** How it reached the computer when it paired. */
+  via: 'wifi' | 'tailscale' | 'other';
+  createdAt: number;
+  lastSeenAt: number;
+}
+
+/** Built-in Tailscale: the dashboard on your tailnet, with HTTPS. */
+export interface TailscaleInfo {
+  /** This install includes it (the desktop app does). */
+  available: boolean;
+  enabled: boolean;
+  state: 'off' | 'starting' | 'needs-login' | 'needs-approval' | 'running' | 'error';
+  /** Where to sign this computer in, while state is needs-login. */
+  loginUrl?: string;
+  /** The dashboard's address on the tailnet, once running. */
+  url?: string;
+  /** The Tailscale account this computer is signed in as; that account's devices get in without pairing. */
+  login?: string;
+  /** False when the tailnet has MagicDNS or HTTPS certificates turned off (then no notifications). */
+  https?: boolean;
+  message?: string;
+}
+
+/** How phones and other computers can reach this one. */
+export interface RemoteInfo {
+  wifi: {
+    enabled: boolean;
+    port: number;
+    /** http://<address>:<port> for each address on the local network. */
+    urls: string[];
+    error?: string;
+  };
+  tailscale: TailscaleInfo;
+}
+
+/** A one-time code for pairing a device, and the links (with QR codes) that carry it. */
+export interface PairingCode {
+  /** As shown: ABCD-EFGH. */
+  code: string;
+  expiresAt: number;
+  links: { via: 'tailscale' | 'wifi'; url: string; qrSvg: string }[];
+}
+
+/** How this browser may use the dashboard, from GET /api/auth. */
+export interface AuthInfo {
+  /** This browser has to log in or pair first. */
+  required: boolean;
+  /** A password is set, so logging in with it works too. */
+  password: boolean;
+  /** Set when this browser is a paired device. */
+  device: DeviceInfo | null;
+  /** The browser runs on this computer (it may switch remote access on and off). */
+  local: boolean;
+}
+
 /** What the desktop app's window adds to the page, as `window.remoteAI` (see desktop/preload.ts). */
 export interface DesktopBridge {
   desktop: true;
@@ -195,4 +254,6 @@ export interface DesktopBridge {
 
 export type ServerEvent =
   | { type: 'status'; sessionId: string; status: SessionStatus }
-  | { type: 'sessions' };
+  | { type: 'sessions' }
+  /** Remote access or the paired devices changed. */
+  | { type: 'remote' };

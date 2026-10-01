@@ -165,6 +165,7 @@ async function buildTrayMenu(): Promise<void> {
       { label: 'Open remote-ai', click: () => showWindow() },
       { label: summary, enabled: false },
       { type: 'separator' },
+      { label: 'Connect a phone…', click: () => showWindow('/#/connect') },
       {
         label: 'Open at login',
         type: 'checkbox',
@@ -226,6 +227,16 @@ function prepareEnvironment(): void {
   if (env.PATH) process.env.PATH = env.PATH;
 }
 
+/** The built-in Tailscale sidecar shipped with this build, if any. */
+function tailscaleBinary(): string | null {
+  const exe = process.platform === 'win32' ? 'remote-ai-tailscale.exe' : 'remote-ai-tailscale';
+  const os_ = { darwin: 'mac', win32: 'win' }[process.platform as string] ?? 'linux';
+  const file = app.isPackaged
+    ? path.join(process.resourcesPath, 'tailscale', exe)
+    : path.join(here, '..', 'tailscale', `${os_}-${process.arch}`, exe);
+  return fs.existsSync(file) ? file : null;
+}
+
 function startupError(err: unknown, port: number, dataDir: string): string {
   const e = err as NodeJS.ErrnoException;
   if (e.code === 'EADDRINUSE') {
@@ -277,6 +288,9 @@ async function main(): Promise<void> {
       updates: updater.provider,
       onNotice: notify,
       logFile: path.join(dataDir, 'server.log'),
+      // Phones and other computers pair with a code before they get in.
+      requirePairing: true,
+      tailscaleBinary: tailscaleBinary(),
     });
   } catch (err) {
     dialog.showErrorBox('remote-ai could not start', startupError(err, config.port, dataDir));

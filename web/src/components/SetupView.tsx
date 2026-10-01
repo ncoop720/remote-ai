@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage } from '../api';
 import { desktopApp } from '../desktop';
 import { routes } from '../hooks';
-import type { AgentInfo, ProjectInfo, SetupInfo } from '../../../shared/types';
+import type { AgentInfo, DeviceInfo, ProjectInfo, SetupInfo } from '../../../shared/types';
 import { Check, ChevronLeft, Folder } from './icons';
 import { Terminal } from './Terminal';
 
@@ -181,7 +181,30 @@ function ProjectsStep({ projects, onChanged }: { projects: ProjectInfo[]; onChan
   );
 }
 
-/** The first-run checklist: git, the coding agent, and projects. */
+/** Optional: phones are for later, so this never holds the checklist up. */
+function PhoneStep() {
+  const [devices, setDevices] = useState<DeviceInfo[] | null>(null);
+  useEffect(() => {
+    api.devices().then(setDevices, () => setDevices([]));
+  }, []);
+  const n = devices?.length ?? 0;
+  return (
+    <Step done={n > 0} title="Connect your phone (optional)">
+      <p>
+        {n > 0
+          ? `${n} device${n === 1 ? ' is' : 's are'} paired.`
+          : 'Scan a QR code to use remote-ai from your phone, on this Wi-Fi or anywhere with Tailscale.'}
+      </p>
+      <div className="row">
+        <a className="btn" href={routes.connect()}>
+          {n > 0 ? 'Manage devices' : 'Connect a phone'}
+        </a>
+      </div>
+    </Step>
+  );
+}
+
+/** The first-run checklist: git, the coding agent, projects, and (optionally) a phone. */
 export function SetupView({ projects, setup, refresh, onSkip }: {
   projects: ProjectInfo[];
   setup: SetupInfo | null;
@@ -217,6 +240,7 @@ export function SetupView({ projects, setup, refresh, onSkip }: {
           <AgentStep key={a.id} agent={a} onChanged={refresh} />
         ))}
         <ProjectsStep projects={projects} onChanged={refresh} />
+        <PhoneStep />
       </ol>
       <div className="row setup-foot">
         {done ? (

@@ -32,6 +32,10 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: tailscale/go.mod
+          cache-dependency-path: tailscale/go.sum
       - run: npm ci
       - run: npm test
       - run: node scripts/build-desktop.mjs --targets ${{ matrix.targets }}

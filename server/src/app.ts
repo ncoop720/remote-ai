@@ -1,11 +1,15 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import Fastify, { type FastifyBaseLogger } from 'fastify';
+import Fastify, { type FastifyBaseLogger, type FastifyRequest } from 'fastify';
 import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
-import { Auth } from './auth.js';
+import { Auth, isLocalRequest, parseCookies } from './auth.js';
+import { deviceName, Devices } from './devices.js';
+import { RemoteAccess } from './remote.js';
+import { Tailscale } from './tailscale.js';
 import type { Config } from './config.js';
 import { gitUpdates, installRoot, type UpdateProvider } from './update.js';
 import { CommandError, run } from './exec.js';
@@ -25,7 +29,16 @@ import { attachTerminal, CLOSE_NOT_FOUND } from './terminal.js';
 import { streamTranscript } from './transcript.js';
 import { HostClient, type HostCommand } from './hostclient.js';
 import { isValidTermName, type TermRef } from './host/protocol.js';
-import type { CreateSessionRequest, DevAction, SessionStatus, SetupInfo, StartSessionRequest } from '../../shared/types.js';
+import type {
+  AuthInfo,
+  CreateSessionRequest,
+  DevAction,
+  PairingCode,
+  RemoteInfo,
+  SessionStatus,
+  SetupInfo,
+  StartSessionRequest,
+} from '../../shared/types.js';
 
 export interface ServerOptions {
   config: Config;
@@ -39,6 +52,13 @@ export interface ServerOptions {
   onNotice?: (notice: Notice) => void;
   /** Log here instead of stdout. */
   logFile?: string;
+  /**
+   * Remote requests need a paired device (the desktop app). Without it, a server with no password
+   * stays open to whatever proxy exposes it, as in v1.
+   */
+  requirePairing?: boolean;
+  /** The built-in Tailscale sidecar (remote-ai-tailscale); left out where it isn't shipped. */
+  tailscaleBinary?: string | null;
 }
 
 export interface RunningServer {
@@ -46,9 +66,12 @@ export interface RunningServer {
   host: HostClient;
   sessions: SessionManager;
   statuses: StatusStore;
+  remote: RemoteAccess;
   log: FastifyBaseLogger;
   close(): Promise<void>;
 }
+
+const parseCookie = (req: FastifyRequest, name: string) => parseCookies(req.headers.cookie)[name];
 
 /** Terminals for installing and signing in to agents live in this pseudo-session. */
 export const SETUP_SESSION = '_setup';
@@ -75,7 +98,23 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     claudeAdapter({ command: cfg.claudeCommand, settingsPath: writeClaudeSettings(cfg.dataDir, cfg.port, hookToken) }),
   ]);
   const dev = new DevManager(cfg, host, state);
-  const auth = new Auth(cfg.dataDir, cfg.password);
+  const devices = new Devices(cfg.dataDir);
+  // Marks requests from the built-in Tailscale proxy; new each start, handed to the proxy as it starts.
+  const proxySecret = crypto.randomBytes(24).toString('base64url');
+  const tailscale = new Tailscale({
+    binary: opts.tailscaleBinary ?? null,
+    dataDir: cfg.dataDir,
+    target: `http://127.0.0.1:${cfg.port}`,
+    secret: proxySecret,
+    log: app.log,
+  });
+  const auth = new Auth(cfg.dataDir, devices, {
+    password: cfg.password,
+    requirePairing: opts.requirePairing ?? cfg.requirePairing,
+    proxySecret,
+    tailnetOwner: () => tailscale.owner(),
+  });
+  const remote = new RemoteAccess({ dataDir: cfg.dataDir, wifiPort: cfg.wifiPort, app, tailscale, log: app.log });
   const sessions = new SessionManager(cfg, host, state, statuses, agents, dev);
   const hub = new EventHub();
 
@@ -128,7 +167,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   });
 
   // The page itself loads without a login (it shows the login form); the API and terminals need one.
-  const OPEN_PATHS = new Set(['/api/health', '/api/auth', '/api/login', '/api/logout']);
+  const OPEN_PATHS = new Set(['/api/health', '/api/auth', '/api/login', '/api/logout', '/api/pair', '/api/pair/handoff']);
   app.addHook('onRequest', async (req, reply) => {
     const url = req.url.split('?')[0]!;
     if (!url.startsWith('/api/') && !url.startsWith('/ws/')) return;
@@ -137,7 +176,66 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     return reply.code(401).send({ error: 'Log in first' });
   });
 
-  app.get('/api/auth', async (req) => ({ required: auth.enabled && !auth.allowed(req), enabled: auth.enabled }));
+  app.get('/api/auth', async (req, reply): Promise<AuthInfo> => {
+    const device = auth.device(req);
+    // Renewed on every visit, so a device in use never reaches the cookie's expiry.
+    if (device) auth.setDeviceCookie(req, reply, String(parseCookie(req, 'ra_device')));
+    return { required: !auth.allowed(req), password: auth.enabled, device, local: isLocalRequest(req.socket.remoteAddress, req.headers) };
+  });
+
+  // ---- Pairing: phones and other browsers ----
+
+  const pairedVia = (req: FastifyRequest) =>
+    auth.viaTailscale(req) ? 'tailscale' : req.socket.localPort === cfg.wifiPort ? 'wifi' : 'other';
+
+  app.post<{ Body: { code?: string } }>('/api/pair', async (req, reply) => {
+    const result = devices.pair(req.body?.code, { name: deviceName(req.headers['user-agent']), via: pairedVia(req) });
+    if (result === 'limited') return reply.code(429).send({ error: 'Too many wrong codes; wait a few minutes' });
+    if (result === 'invalid') return reply.code(400).send({ error: "That code didn't work. Codes work once, for 10 minutes." });
+    auth.setDeviceCookie(req, reply, result.cookie);
+    app.log.info({ device: result.device.name, via: result.device.via }, 'device paired');
+    hub.broadcast({ type: 'remote' });
+    return { device: result.device };
+  });
+
+  // A Home Screen app signing itself in with the code its browser left in the manifest.
+  app.post<{ Body: { code?: string } }>('/api/pair/handoff', async (req, reply) => {
+    const result = devices.redeemHandoff(req.body?.code);
+    if (!result) return reply.code(400).send({ error: 'That link has expired' });
+    auth.setDeviceCookie(req, reply, result.cookie);
+    return { device: result.device };
+  });
+
+  app.post('/api/pair/new', async (): Promise<PairingCode> => {
+    const { code, expiresAt } = devices.createCode();
+    return remote.pairingLinks(code, expiresAt);
+  });
+
+  app.get('/api/devices', async () => devices.list());
+
+  app.delete<{ Params: { id: string } }>('/api/devices/:id', async (req) => {
+    if (!devices.remove(req.params.id)) throw new HttpError(404, 'No such device');
+    hub.broadcast({ type: 'remote' });
+    return { ok: true };
+  });
+
+  app.get('/api/remote', async (): Promise<RemoteInfo> => remote.info());
+
+  // Only from this computer: turning access on from a phone would be odd, and off would lock it out.
+  app.post<{ Body: { wifi?: boolean; tailscale?: boolean } }>('/api/remote', async (req) => {
+    if (!isLocalRequest(req.socket.remoteAddress, req.headers)) throw new HttpError(403, 'Change this on the computer itself');
+    if (typeof req.body?.wifi === 'boolean') await remote.setWifi(req.body.wifi);
+    if (typeof req.body?.tailscale === 'boolean') remote.setTailscale(req.body.tailscale);
+    return remote.info();
+  });
+
+  app.post('/api/remote/tailscale/logout', async (req) => {
+    if (!isLocalRequest(req.socket.remoteAddress, req.headers)) throw new HttpError(403, 'Change this on the computer itself');
+    tailscale.logout();
+    return { ok: true };
+  });
+
+  remote.on('change', () => hub.broadcast({ type: 'remote' }));
 
   app.post<{ Body: { password?: string } }>('/api/login', async (req, reply) => {
     const result = auth.login(req, reply, req.body?.password);
@@ -358,6 +456,20 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const webDir = (opts.webDir ? [opts.webDir] : [path.resolve(here, '../../web'), path.resolve(here, '../../../dist/web')]).find((d) =>
     fs.existsSync(path.join(d, 'index.html')),
   );
+  // The web app manifest, with a sign-in code in start_url for a paired device: an iPhone's Home
+  // Screen app keeps its own cookies, apart from Safari's, and would otherwise start unpaired.
+  app.get('/manifest.webmanifest', async (req, reply) => {
+    let manifest: Record<string, unknown> = { name: 'remote-ai', short_name: 'remote-ai', start_url: '/', display: 'standalone' };
+    try {
+      if (webDir) manifest = JSON.parse(fs.readFileSync(path.join(webDir, 'manifest.webmanifest'), 'utf8')) as Record<string, unknown>;
+    } catch {
+      // keep the default
+    }
+    const device = auth.device(req);
+    if (device) manifest = { ...manifest, start_url: `/?handoff=${devices.handoffCode(device.id)}` };
+    return reply.header('Cache-Control', 'no-store').type('application/manifest+json').send(JSON.stringify(manifest));
+  });
+
   if (webDir) {
     // Files are looked up per request (not registered at startup), so `npm run build` while the
     // server runs takes effect on the next page load; index.html is revalidated every time.
@@ -402,14 +514,18 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   const port = typeof address === 'object' && address ? address.port : cfg.port;
   app.log.info(`projects: ${cfg.projectsDir ?? '(added only)'}  worktrees: ${cfg.worktreesDir}  data: ${cfg.dataDir}`);
 
+  await remote.restore();
+
   return {
     url: `http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${port}`,
     host,
     sessions,
     statuses,
+    remote,
     log: app.log,
     async close() {
       clearInterval(portPoll);
+      await remote.close();
       host.close();
       await app.close();
       logStream?.end();

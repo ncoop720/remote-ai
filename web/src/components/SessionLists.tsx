@@ -47,9 +47,14 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
         ))}
         {projects.length === 0 && <EmptyProjects />}
       </div>
-      <a className="sidebar-link" href={routes.setup()}>
-        Projects &amp; setup
-      </a>
+      <div className="sidebar-links">
+        <a className="sidebar-link" href={routes.connect()}>
+          Connect a phone
+        </a>
+        <a className="sidebar-link" href={routes.setup()}>
+          Projects &amp; setup
+        </a>
+      </div>
       <UpdatePanel />
     </nav>
   );

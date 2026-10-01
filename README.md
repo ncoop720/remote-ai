@@ -32,11 +32,16 @@ Download the installer for your OS from the [releases](https://github.com/ncoop7
 
 - The app lives in the tray (the menu bar on macOS) and starts at login; closing the window keeps it running. **Quit** leaves sessions running in the session host, and the next start picks them up again. **Stop all sessions and quit** ends them.
 - Notifications come from the app itself, so the dashboard's bell (Web Push, for phones) is hidden in its window.
+- **Connect a phone** (in the tray, the sidebar and the checklist) shows a QR code. Scanning it opens the dashboard on the phone and pairs it with a one-time code (valid once, for 10 minutes; it can be typed too). Paired devices are listed there and can be removed. Every request from another device needs a paired device; requests from the computer itself don't.
+- Phones reach the computer in one of two ways, both off until you turn them on there:
+  - **On this Wi-Fi**: a second listener on port 8788 (`"wifiPort"` in `config.json`). It is plain http, so use it on networks you trust; phones can't get notifications over it.
+  - **Anywhere, with Tailscale**: the app joins your tailnet as its own device (built in with [tsnet](https://tailscale.com/kb/1244/tsnet), so the Tailscale app isn't needed on the computer) and serves the dashboard at `https://remote-ai-<computer>.<tailnet>.ts.net`. Sign the computer in once from the Connect page. Your own devices, signed in to Tailscale as you, get in without a code; other people's on the same tailnet need one. HTTPS (and so notifications and installing the app) needs MagicDNS and HTTPS Certificates turned on in the tailnet's [DNS settings](https://login.tailscale.com/admin/dns).
+- On iPhone, add the page to the Home Screen after pairing (Share, then Add to Home Screen) and open it from there to turn on notifications. The Home Screen app signs itself in, even though iOS keeps its cookies apart from Safari's.
 - Updates download from GitHub releases in the background; **Restart to update** in the tray or the sidebar installs them. Sessions keep running through an update, because the session host runs from its own copy outside the app (`~/.remote-ai/host-runtime/`), which only changes when the host itself does.
 - Data, logs and settings live in `~/.remote-ai`, as with the server. The window is served on `127.0.0.1:8787`; set `"port"` in `~/.remote-ai/config.json` to change it.
 - The builds aren't code-signed yet, so macOS and Windows warn the first time you open the app, and macOS won't install updates by itself. Only the AppImage updates itself on Linux.
 
-To build it yourself: `npm run desktop:start` runs it from source (with its own data in `~/.remote-ai-desktop-dev`), and `npm run desktop:dist` makes installers for this OS in `dist/release`. Pushing a `v*` tag builds all three on GitHub Actions (`.github/workflows/desktop.yml`) and drafts a release.
+To build it yourself: `npm run desktop:start` runs it from source (with its own data in `~/.remote-ai-desktop-dev`), and `npm run desktop:dist` makes installers for this OS in `dist/release`. Building the Tailscale part (`tailscale/`, in Go) uses `go` from your PATH, or downloads a Go release into `~/.cache/remote-ai-build`. Pushing a `v*` tag builds all three on GitHub Actions (`.github/workflows/desktop.yml`) and drafts a release.
 
 ## Server install (Linux)
 
@@ -79,7 +84,7 @@ Https matters: it's what lets the phone install the dashboard as an app and rece
 
 ### Password (optional)
 
-Set `REMOTE_AI_PASSWORD` (or `"password"` in `~/.remote-ai/config.json`) to require a login for requests that arrive through a proxy such as `tailscale serve` or from another machine. Requests made on the machine itself are trusted, since anything that can make them can already run programs as you. Logins last 30 days.
+Set `REMOTE_AI_PASSWORD` (or `"password"` in `~/.remote-ai/config.json`) to require a login for requests that arrive through a proxy such as `tailscale serve` or from another machine. Or set `REMOTE_AI_REQUIRE_PAIRING=1` (`"requirePairing": true`) to require a paired device instead, as the desktop app does; pair devices from Connect a phone in a browser on the machine itself. Requests made on the machine itself are trusted, since anything that can make them can already run programs as you. Logins last 30 days.
 
 Don't expose the dashboard to the public internet: anyone who can open it gets a shell on the machine.
 
@@ -157,6 +162,6 @@ v2:
 
 - [x] Session host and agent adapters: native terminals on macOS, Windows and Linux instead of tmux; Claude Code as the first adapter
 - [x] Desktop app: installers, tray, start at login, updates, first-run checklist
-- [ ] Pairing: QR code for phones, then built-in Tailscale with https
+- [x] Pairing: QR code for phones, then built-in Tailscale with https
 - [ ] Preview through the app's secure address
 - [ ] Dev-server detection, and Set up with Claude

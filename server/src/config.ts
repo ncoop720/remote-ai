@@ -5,6 +5,8 @@ import path from 'node:path';
 export interface Config {
   host: string;
   port: number;
+  /** Where phones on the same Wi-Fi connect, once that is turned on (the main port stays on localhost). */
+  wifiPort: number;
   /** Every git checkout in this directory is a project, besides those added one by one. Null for none. */
   projectsDir: string | null;
   /** Where new worktrees are created: `<worktreesDir>/<project>/<branch>`. */
@@ -19,6 +21,8 @@ export interface Config {
   pushSubject: string;
   /** When set, requests that reach the server through a proxy or the network must log in. */
   password?: string;
+  /** Requests from other devices need a paired device (or the password). The desktop app always pairs. */
+  requirePairing?: boolean;
 }
 
 export function expandHome(p: string): string {
@@ -46,6 +50,7 @@ export function loadConfig(defaults: Partial<Config> = {}): Config {
   return {
     host: env.REMOTE_AI_HOST ?? file.host ?? defaults.host ?? '127.0.0.1',
     port: Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787),
+    wifiPort: Number(env.REMOTE_AI_WIFI_PORT ?? file.wifiPort ?? defaults.wifiPort ?? Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787) + 1),
     projectsDir: projectsDir ? path.resolve(expandHome(projectsDir)) : null,
     worktreesDir: path.resolve(expandHome(env.REMOTE_AI_WORKTREES_DIR ?? file.worktreesDir ?? defaults.worktreesDir ?? '~/worktrees')),
     dataDir,
@@ -54,5 +59,6 @@ export function loadConfig(defaults: Partial<Config> = {}): Config {
     portStep: Number(file.portStep ?? defaults.portStep ?? 10),
     pushSubject: env.REMOTE_AI_PUSH_SUBJECT ?? file.pushSubject ?? 'https://github.com/ncoop720/remote-ai',
     password: env.REMOTE_AI_PASSWORD || file.password || undefined,
+    requirePairing: env.REMOTE_AI_REQUIRE_PAIRING ? env.REMOTE_AI_REQUIRE_PAIRING === '1' : (file.requirePairing ?? defaults.requirePairing),
   };
 }

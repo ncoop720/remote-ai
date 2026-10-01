@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useState } from 'react';
-import { api } from './api';
+import { api, errorMessage } from './api';
+import type { AuthInfo } from '../../shared/types';
 import { useMediaQuery, useProjects, useRoute } from './hooks';
 import { Login } from './components/Login';
 import { NewSession } from './components/NewSession';
 import { MobileSessionList, Sidebar } from './components/SessionLists';
 import { SessionView } from './components/SessionView';
 import { setupNeeded, SetupView, useSetup } from './components/SetupView';
+import { ConnectView } from './components/ConnectView';
+import { InstallHint } from './components/InstallHint';
 
 const SKIP_KEY = 'ra-setup-skipped';
 
@@ -17,26 +20,55 @@ function readSkipped(): boolean {
   }
 }
 
-/** Shows the login form when the server has a password and this browser isn't logged in. */
+/**
+ * A device's first visit can bring a code: a pairing code in the link from the computer's QR code
+ * (#/pair/CODE), or the sign-in code an iPhone's Home Screen app gets from its manifest (?handoff=).
+ * Use it, tidy the address, then see whether this browser may use the dashboard.
+ */
+async function arrive(): Promise<{ info: AuthInfo | null; paired: boolean; error: string | null }> {
+  const params = new URLSearchParams(window.location.search);
+  const handoff = params.get('handoff');
+  if (handoff) {
+    await api.handoff(handoff).catch(() => undefined);
+    window.history.replaceState(null, '', window.location.pathname + window.location.hash);
+  }
+  let paired = false;
+  let error: string | null = null;
+  const pairing = /^#\/pair\/([A-Za-z0-9-]+)/.exec(window.location.hash);
+  if (pairing) {
+    window.history.replaceState(null, '', `${window.location.pathname}#/`);
+    try {
+      await api.pair(pairing[1]!);
+      paired = true;
+    } catch (err) {
+      error = errorMessage(err);
+    }
+  }
+  const info = await api.auth().catch(() => null);
+  return { info, paired, error };
+}
+
+/** Shows the pairing screen when this browser isn't connected to the computer yet. */
 export function App() {
-  const [auth, setAuth] = useState<'checking' | 'ok' | 'login'>('checking');
+  const [state, setState] = useState<{ info: AuthInfo | null; paired: boolean; error: string | null } | null>(null);
+  const [needsLogin, setNeedsLogin] = useState(false);
 
   useEffect(() => {
-    api
-      .auth()
-      .then((a) => setAuth(a.required ? 'login' : 'ok'))
-      .catch(() => setAuth('ok'));
-    const onRequired = () => setAuth('login');
+    void arrive().then((s) => {
+      setState(s);
+      setNeedsLogin(Boolean(s.info?.required));
+    });
+    const onRequired = () => setNeedsLogin(true);
     window.addEventListener('ra-login-required', onRequired);
     return () => window.removeEventListener('ra-login-required', onRequired);
   }, []);
 
-  if (auth === 'checking') return <div className="splash">Loading…</div>;
-  if (auth === 'login') return <Login onDone={() => window.location.reload()} />;
-  return <Dashboard />;
+  if (!state) return <div className="splash">Loading…</div>;
+  if (needsLogin) return <Login info={state.info} initialError={state.error} onDone={() => window.location.reload()} />;
+  return <Dashboard justPaired={state.paired} local={state.info?.local ?? false} />;
 }
 
-function Dashboard() {
+function Dashboard({ justPaired, local }: { justPaired: boolean; local: boolean }) {
   const { projects, error, refresh } = useProjects();
   const { setup, refresh: refreshSetup } = useSetup();
   const refreshAll = useCallback(async () => {
@@ -60,7 +92,7 @@ function Dashboard() {
     }
     setSkipped(true);
   };
-  const setupView = (route.name === 'setup' || autoSetup) && (
+  const page = route.name === 'connect' ? <ConnectView local={local} /> : (route.name === 'setup' || autoSetup) && (
     <SetupView
       projects={projects}
       setup={setup}
@@ -87,7 +119,7 @@ function Dashboard() {
     return (
       <div className="layout-desktop">
         <Sidebar projects={projects} selectedId={selected?.id} />
-        <main className="main">{setupView || main || <div className="empty-main">Pick a session, or start a new one.</div>}</main>
+        <main className="main">{page || main || <div className="empty-main">Pick a session, or start a new one.</div>}</main>
         {newSession}
         {error && <div className="toast error">{error}</div>}
       </div>
@@ -96,7 +128,8 @@ function Dashboard() {
 
   return (
     <div className="layout-mobile">
-      {setupView || (route.name === 'home' || route.name === 'new' ? <MobileSessionList projects={projects} /> : main)}
+      {justPaired && <InstallHint />}
+      {page || (route.name === 'home' || route.name === 'new' ? <MobileSessionList projects={projects} /> : main)}
       {newSession}
       {error && <div className="toast error">{error}</div>}
     </div>
