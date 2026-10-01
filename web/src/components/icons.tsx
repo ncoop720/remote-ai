@@ -31,6 +31,11 @@ export const ChevronRight = (p: P) => (
     <path d="m9 18 6-6-6-6" />
   </Icon>
 );
+export const Check = (p: P) => (
+  <Icon {...p}>
+    <path d="M5 12.5l4.5 4.5L19 7.5" />
+  </Icon>
+);
 export const Plus = (p: P) => (
   <Icon {...p}>
     <path d="M12 5v14M5 12h14" />

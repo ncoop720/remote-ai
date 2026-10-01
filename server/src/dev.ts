@@ -5,15 +5,16 @@ import type { Config } from './config.js';
 import { portVar, type ProjectConfig } from './devconfig.js';
 import { HttpError } from './errors.js';
 import { shellQuote } from './exec.js';
+import type { HostClient } from './hostclient.js';
+import type { TermInfo } from './host/protocol.js';
 import { beginLog, logDir, logFile } from './logs.js';
 import type { StateStore } from './state.js';
-import { SHELLS, type Tmux } from './tmux.js';
-import type { DevInfo, SetupState, TmuxWindow } from '../../shared/types.js';
+import type { DevInfo, SetupState } from '../../shared/types.js';
 
-export const SETUP_WINDOW = 'setup';
+export const SETUP_TERMINAL = 'setup';
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-export function devWindow(server: string): string {
+export function devTerminal(server: string): string {
   return `dev-${server}`;
 }
 
@@ -23,15 +24,20 @@ export interface DevTarget {
   path: string;
 }
 
+/** Run setup commands one after another, each from the worktree root whatever the previous one cd'd into. */
+export function setupCommand(commands: string[], root: string, platform = process.platform): string {
+  const cd = platform === 'win32' ? `cd /d "${root}"` : `cd ${shellQuote(root)}`;
+  return commands.join(` && ${cd} && `);
+}
+
 /**
- * Dev servers and setup for one worktree, each in its own tmux window of the session. Commands
- * are typed into an interactive shell (like the claude window) so rc files set up PATH, and a
- * server counts as running while that shell has a foreground program.
+ * Dev servers and setup for one worktree, each in its own terminal in the session host. A server
+ * is running while its process is; its output goes to a log file the Logs panel streams.
  */
 export class DevManager {
   constructor(
     private readonly cfg: Config,
-    private readonly tmux: Tmux,
+    private readonly host: HostClient,
     private readonly state: StateStore,
   ) {}
 
@@ -53,32 +59,44 @@ export class DevManager {
     return env;
   }
 
-  info(target: DevTarget, config: ProjectConfig, windows: TmuxWindow[]): DevInfo {
-    const byName = new Map(windows.map((w) => [w.name, w]));
-    const busy = (name: string) => {
-      const w = byName.get(name);
-      return Boolean(w && !SHELLS.has(w.command));
-    };
-    let setup: SetupState = 'none';
-    if (config.setup.length > 0) {
-      if (byName.has(SETUP_WINDOW) && !fs.existsSync(this.marker(target.path, 'failed'))) setup = 'running';
-      else if (fs.existsSync(this.marker(target.path, 'failed'))) setup = 'failed';
-      else if (fs.existsSync(this.marker(target.path, 'done'))) setup = 'done';
-      else setup = 'pending';
+  /**
+   * Setup's result outlives its terminal (the host forgets terminals when it restarts), so a
+   * finished setup is recorded in a marker file.
+   */
+  private setupState(target: DevTarget, term: TermInfo | undefined): SetupState {
+    const done = this.marker(target.path, 'done');
+    const failed = this.marker(target.path, 'failed');
+    if (term?.alive) return 'running';
+    if (term && !fs.existsSync(term.exitCode === 0 ? done : failed)) {
+      fs.mkdirSync(path.dirname(done), { recursive: true });
+      fs.rmSync(term.exitCode === 0 ? failed : done, { force: true });
+      fs.writeFileSync(term.exitCode === 0 ? done : failed, '');
     }
+    if (fs.existsSync(failed)) return 'failed';
+    if (fs.existsSync(done)) return 'done';
+    return 'pending';
+  }
+
+  /** `terms` are this session's terminals in the host. */
+  info(target: DevTarget, config: ProjectConfig, terms: TermInfo[]): DevInfo {
+    const byName = new Map(terms.map((t) => [t.name, t]));
     const ports = this.ports(target.path, config, false);
     return {
       source: config.source,
       error: config.error,
-      setup,
+      setup: config.setup.length > 0 ? this.setupState(target, byName.get(SETUP_TERMINAL)) : 'none',
       servers: config.servers.map((s) => ({
         name: s.name,
         port: ports.get(s.name) ?? null,
-        state: busy(devWindow(s.name)) ? 'running' : 'stopped',
+        state: byName.get(devTerminal(s.name))?.alive ? 'running' : 'stopped',
         command: s.command,
         cwd: s.cwd,
       })),
     };
+  }
+
+  private async terms(target: DevTarget): Promise<TermInfo[]> {
+    return (await this.host.list()).filter((t) => t.session === target.id);
   }
 
   private checkLimits(config: ProjectConfig): void {
@@ -88,80 +106,70 @@ export class DevManager {
     }
   }
 
-  /** Run the setup commands in a "setup" window. It closes itself on success and stays open on failure. */
-  async runSetup(target: DevTarget, config: ProjectConfig, windows: TmuxWindow[]): Promise<void> {
+  /** Run the setup commands in a "setup" terminal; its exit code says whether setup worked. */
+  async runSetup(target: DevTarget, config: ProjectConfig): Promise<void> {
     this.checkLimits(config);
     if (config.setup.length === 0) throw new HttpError(400, 'This project has no setup commands');
-    if (this.info(target, config, windows).setup === 'running') throw new HttpError(409, 'Setup is already running');
+    if ((await this.terms(target)).some((t) => t.name === SETUP_TERMINAL && t.alive)) {
+      throw new HttpError(409, 'Setup is already running');
+    }
+    fs.rmSync(this.marker(target.path, 'done'), { force: true });
+    fs.rmSync(this.marker(target.path, 'failed'), { force: true });
 
-    const done = this.marker(target.path, 'done');
-    const failed = this.marker(target.path, 'failed');
-    fs.mkdirSync(path.dirname(done), { recursive: true });
-    fs.rmSync(done, { force: true });
-    fs.rmSync(failed, { force: true });
-
-    const win = `=${target.id}:${SETUP_WINDOW}`;
-    if (windows.some((w) => w.name === SETUP_WINDOW)) await this.tmux.killWindow(win);
-    await this.tmux.newWindow(target.id, SETUP_WINDOW, target.path, this.env(target, config));
-    const file = logFile(this.cfg.dataDir, target.id, SETUP_WINDOW);
+    const file = logFile(this.cfg.dataDir, target.id, SETUP_TERMINAL);
     beginLog(file, `setup: ${config.setup.join(' && ')}`);
-    await this.tmux.pipeToFile(win, file);
-
-    // Each command starts from the worktree root, whatever the previous one cd'd into.
-    const steps = config.setup.join(` && cd ${shellQuote(target.path)} && `);
-    const command = `${steps} && touch ${shellQuote(done)} && exit || touch ${shellQuote(failed)}`;
-    await this.tmux.sendText(win, command);
-    await this.tmux.sendKeys(win, ['Enter']);
+    await this.host.spawn({
+      session: target.id,
+      name: SETUP_TERMINAL,
+      cwd: target.path,
+      command: setupCommand(config.setup, target.path),
+      env: this.env(target, config),
+      logFile: file,
+    });
   }
 
-  async start(target: DevTarget, config: ProjectConfig, windows: TmuxWindow[], only?: string): Promise<void> {
+  async start(target: DevTarget, config: ProjectConfig, only?: string): Promise<void> {
     this.checkLimits(config);
     const servers = config.servers.filter((s) => !only || s.name === only);
     if (servers.length === 0) throw new HttpError(only ? 404 : 400, only ? `No server named ${only}` : 'No dev servers are configured');
-    if (this.info(target, config, windows).setup === 'running') throw new HttpError(409, 'Setup is still running');
+    const terms = await this.terms(target);
+    if (terms.some((t) => t.name === SETUP_TERMINAL && t.alive)) throw new HttpError(409, 'Setup is still running');
 
     const env = this.env(target, config);
     const ports = this.ports(target.path, config, true);
     for (const [i, server] of servers.entries()) {
-      const name = devWindow(server.name);
-      const win = `=${target.id}:${name}`;
-      const existing = windows.find((w) => w.name === name);
-      if (existing && !SHELLS.has(existing.command)) continue;
-
-      if (!existing) {
-        const cwd = path.join(target.path, server.cwd);
-        await this.tmux.newWindow(target.id, name, cwd, { ...env, PORT: String(ports.get(server.name)) });
-      }
+      const name = devTerminal(server.name);
+      if (terms.some((t) => t.name === name && t.alive)) continue;
       const file = logFile(this.cfg.dataDir, target.id, server.name);
       beginLog(file, `${server.name}: ${server.command}`);
-      await this.tmux.pipeToFile(win, file);
-      await this.tmux.sendText(win, server.command);
-      await this.tmux.sendKeys(win, ['Enter']);
+      await this.host.spawn({
+        session: target.id,
+        name,
+        cwd: path.join(target.path, server.cwd),
+        command: server.command,
+        env: { ...env, PORT: String(ports.get(server.name)) },
+        logFile: file,
+      });
       // Later servers may read files an earlier one writes as it starts (e.g. a port in .env).
       if (i < servers.length - 1) await sleep(500);
     }
   }
 
-  /** Ctrl-C each running server and wait (up to ~5 s) for it to get back to its shell. */
+  /** Ctrl-C each running server, and end any that are still running ~5 s later. */
   async stop(target: DevTarget, config: ProjectConfig, only?: string): Promise<void> {
     const servers = config.servers.filter((s) => !only || s.name === only);
     if (only && servers.length === 0) throw new HttpError(404, `No server named ${only}`);
-    const running = async () => {
-      const windows = (await this.tmux.listWindows()).get(target.id) ?? [];
-      return servers.filter((s) => {
-        const w = windows.find((x) => x.name === devWindow(s.name));
-        return w && !SHELLS.has(w.command);
-      });
-    };
+    const names = new Set(servers.map((s) => devTerminal(s.name)));
+    const running = async () => (await this.terms(target)).filter((t) => t.alive && names.has(t.name));
     for (let attempt = 0; attempt < 10; attempt++) {
       const left = await running();
       if (left.length === 0) return;
       if (attempt % 4 === 0) {
-        for (const s of left) await this.tmux.sendKeys(`=${target.id}:${devWindow(s.name)}`, ['C-c']);
+        for (const t of left) await this.host.keys({ session: target.id, name: t.name }, ['C-c']);
       }
       await sleep(500);
     }
-    throw new HttpError(500, 'A server did not stop after Ctrl-C; open its terminal to check');
+    for (const t of await running()) await this.host.kill({ session: target.id, name: t.name });
   }
 
   logFile(sessionId: string, name: string): string {
@@ -175,8 +183,8 @@ export class DevManager {
     fs.rmSync(logDir(this.cfg.dataDir, target.id), { recursive: true, force: true });
   }
 
-  /** Appended to Claude's system prompt so it uses these servers and logs instead of starting its own. */
-  describeForClaude(target: DevTarget, config: ProjectConfig): string | undefined {
+  /** Appended to the agent's instructions so it uses these servers and logs instead of starting its own. */
+  describeForAgent(target: DevTarget, config: ProjectConfig): string | undefined {
     if (config.servers.length === 0 || config.error) return undefined;
     const ports = this.ports(target.path, config, true);
     const api = `http://127.0.0.1:${this.cfg.port}/api/sessions/${target.id}/dev`;
@@ -186,7 +194,7 @@ export class DevManager {
         `output in ${logFile(this.cfg.dataDir, target.id, s.name)}`,
     );
     return [
-      'This worktree is managed by the remote-ai dashboard, which runs its dev servers in separate tmux windows.',
+      'This worktree is managed by the remote-ai dashboard, which runs its dev servers itself.',
       'Do not start these servers yourself; read their log files to see their output and errors.',
       ...lines,
       `Start them: curl -s -X POST '${api}/start'. Restart one after changes it does not pick up by itself: curl -s -X POST '${api}/restart?name=NAME'.`,

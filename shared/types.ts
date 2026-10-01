@@ -1,16 +1,18 @@
 // Types shared by the server API and the web client. Type-only: nothing here exists at runtime.
 
 export type SessionState =
-  | 'stopped' // no tmux session running
-  | 'unknown' // tmux is running but no hook has reported yet
-  | 'idle' // Claude finished a turn and is waiting for a prompt
-  | 'working' // Claude is processing a prompt or running tools
+  | 'stopped' // the agent isn't running
+  | 'unknown' // the agent is running but hasn't reported yet
+  | 'idle' // the agent finished a turn and is waiting for a prompt
+  | 'working' // the agent is processing a prompt or running tools
   | 'needs_input' // a permission prompt or question is waiting
-  | 'ended'; // the Claude process exited (the shell in the window is still alive)
+  | 'ended'; // the agent's own session ended (its process is exiting)
 
 export interface ToolRequest {
   name: string;
   input: unknown;
+  /** One line about the call (the command, the file), written by the agent's adapter. */
+  summary?: string;
 }
 
 export interface SessionStatus {
@@ -18,15 +20,18 @@ export interface SessionStatus {
   message?: string;
   tool?: ToolRequest;
   lastMessage?: string;
-  claudeSessionId?: string;
+  /** The agent's own id for the conversation (Claude's session_id). */
+  agentSessionId?: string;
   transcriptPath?: string;
   updatedAt: number;
 }
 
-export interface TmuxWindow {
-  index: number;
+/** A terminal the session host runs for a session: the agent, setup, or a dev server. */
+export interface TerminalInfo {
   name: string;
-  command: string;
+  alive: boolean;
+  exitCode: number | null;
+  startedAt: number;
 }
 
 export interface DevServerInfo {
@@ -55,14 +60,17 @@ export interface ListeningPort {
 }
 
 export interface SessionInfo {
-  /** Stable id, also the tmux session name: `<project>__<branch>`. */
+  /** Stable id, `<project>__<branch>`; names the session's terminals in the host. */
   id: string;
+  /** The agent adapter this session runs ("claude"). */
+  agent: string;
   project: string;
   branch: string | null;
   path: string;
   isMain: boolean;
+  /** The agent's terminal is running. */
   running: boolean;
-  windows: TmuxWindow[];
+  terminals: TerminalInfo[];
   port: number | null;
   dirty: number;
   ahead: number | null;
@@ -83,9 +91,13 @@ export type ChatItem =
   | { kind: 'tool'; id: string; toolUseId: string; name: string; summary: string; time: string }
   | { kind: 'result'; id: string; toolUseId: string; ok: boolean; output: string };
 
+/** "added" by picking its folder, or found in the projects "folder" (`~/projects` on a server). */
+export type ProjectSource = 'added' | 'folder';
+
 export interface ProjectInfo {
   name: string;
   path: string;
+  source: ProjectSource;
   defaultBranch: string | null;
   sessions: SessionInfo[];
 }
@@ -93,10 +105,30 @@ export interface ProjectInfo {
 /** Values for `claude --permission-mode`. "manual" asks before every action (formerly "default"). */
 export type PermissionMode = 'auto' | 'manual' | 'acceptEdits' | 'plan';
 
+/** A coding agent the app can run, and whether it is ready on this machine. */
+export interface AgentInfo {
+  id: string;
+  name: string;
+  installed: boolean;
+  signedIn: boolean;
+  version?: string;
+  /** Permission modes it accepts, first is the default. */
+  modes: string[];
+}
+
+/** What the first-run checklist needs to know about this computer. */
+export interface SetupInfo {
+  platform: string;
+  git: { installed: boolean; version?: string };
+  agents: AgentInfo[];
+}
+
 export interface CreateSessionRequest {
   branch: string;
   base?: string;
   prompt?: string;
+  /** Agent adapter id; the default agent when left out. */
+  agent?: string;
   permissionMode?: PermissionMode;
 }
 
@@ -114,6 +146,51 @@ export interface PromptOption {
 export interface VisiblePrompt {
   question: string;
   options: PromptOption[];
+}
+
+/** What the running install is and whether it can update: a git checkout, or the desktop app. */
+export type VersionInfo =
+  | {
+      kind: 'git';
+      commit: string;
+      branch: string;
+      /** Commits on the upstream branch not yet pulled; null if there is no upstream or fetch failed. */
+      behind: number | null;
+      dirty: boolean;
+      /** Running under systemd, which restarts the server after an update that needs it. */
+      managed: boolean;
+    }
+  | {
+      kind: 'desktop';
+      version: string;
+      state: DesktopUpdateState;
+      /** The newest version seen, once a check found one. */
+      latest: string | null;
+      /** Download progress, 0-100. */
+      progress: number | null;
+      error?: string;
+    };
+
+/** "unsupported" when the app wasn't installed from a release (running from source). */
+export type DesktopUpdateState = 'unsupported' | 'idle' | 'checking' | 'up-to-date' | 'downloading' | 'ready' | 'error';
+
+export interface UpdateResult {
+  ok: boolean;
+  from: string;
+  to: string;
+  /** Server code changed, so the process must restart to use it (web changes apply on reload). */
+  restartNeeded: boolean;
+  /** The server (or app) is restarting itself now. */
+  restarting: boolean;
+  log: string[];
+}
+
+/** What the desktop app's window adds to the page, as `window.remoteAI` (see desktop/preload.ts). */
+export interface DesktopBridge {
+  desktop: true;
+  platform: string;
+  /** The native folder picker; null when cancelled. */
+  pickFolder(): Promise<string | null>;
 }
 
 export type ServerEvent =

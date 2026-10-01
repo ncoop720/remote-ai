@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { INITIAL_STATUS, reduceHook, StatusStore, truncateDeep } from './status.js';
+import { INITIAL_STATUS, StatusStore } from '../../status.js';
+import { reduceHook, truncateDeep, type HookPayload } from './hooks.js';
 
 test('a prompt, a permission request, approval and stop move through the states', () => {
   let s = reduceHook(INITIAL_STATUS, { hook_event_name: 'UserPromptSubmit', session_id: 'abc' }, 1);
   assert.equal(s.state, 'working');
-  assert.equal(s.claudeSessionId, 'abc');
+  assert.equal(s.agentSessionId, 'abc');
 
   s = reduceHook(s, { hook_event_name: 'PermissionRequest', tool_name: 'Bash', tool_input: { command: 'pnpm add x' } }, 2);
   assert.equal(s.state, 'needs_input');
-  assert.deepEqual(s.tool, { name: 'Bash', input: { command: 'pnpm add x' } });
+  assert.deepEqual(s.tool, { name: 'Bash', input: { command: 'pnpm add x' }, summary: 'pnpm add x' });
 
   s = reduceHook(s, { hook_event_name: 'Notification', notification_type: 'permission_prompt', message: 'Claude needs your permission to use Bash' }, 3);
   assert.equal(s.state, 'needs_input');
@@ -36,9 +37,10 @@ test('StatusStore emits only on change', () => {
   const store = new StatusStore();
   const seen: string[] = [];
   store.on('change', (id: string, status: { state: string }) => seen.push(`${id}:${status.state}`));
-  store.apply('s1', { hook_event_name: 'UserPromptSubmit' });
-  store.apply('s1', { hook_event_name: 'SubagentStop' });
-  store.apply('s1', { hook_event_name: 'Stop' });
+  const apply = (p: HookPayload) => store.update('s1', (prev) => reduceHook(prev, p));
+  apply({ hook_event_name: 'UserPromptSubmit' });
+  apply({ hook_event_name: 'SubagentStop' });
+  apply({ hook_event_name: 'Stop' });
   assert.deepEqual(seen, ['s1:working', 's1:idle']);
 });
 

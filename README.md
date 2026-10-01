@@ -1,9 +1,9 @@
 # remote-ai
 
-A self-hosted web dashboard for running Claude Code on a remote machine and driving it from a desktop browser or a phone.
+A dashboard for running Claude Code on your computer and driving it from a desktop browser or a phone. It comes as a desktop app for macOS, Windows and Linux, or as a server for a headless Linux machine.
 
-- **Project** = a git repository in `~/projects`.
-- **Session** = a branch checked out in its own git worktree, with Claude Code running in a tmux session there.
+- **Project** = a git repository you add (the server also picks up every repository in `~/projects`).
+- **Session** = a branch checked out in its own git worktree, with Claude Code running there in a terminal the session host keeps alive.
 - The browser shows the live terminal, surfaces permission prompts as buttons, and tracks each session's status (needs you / working / idle) through Claude Code hooks.
 
 Everything runs on your machine. There is no relay and no dependency on Claude's Remote Control.
@@ -14,34 +14,49 @@ Everything runs on your machine. There is no relay and no dependency on Claude's
 browser ──HTTP/WebSocket──► remote-ai server (Node, 127.0.0.1:8787)
                               │
                               ├─ git worktree add ~/worktrees/<project>/<branch>
-                              ├─ tmux -L remote-ai new-session <project>__<branch>
-                              │    └─ window "claude": claude --settings ~/.remote-ai/claude-settings.json
-                              │                                  (hooks POST back to /api/hook)
-                              └─ /ws/terminal/<id> ⇄ node-pty ⇄ tmux attach (one viewer per browser)
+                              └─ session host (a separate Node process; socket in ~/.remote-ai)
+                                   ├─ terminal "agent":   claude --settings ~/.remote-ai/claude-settings.json
+                                   │                        (hooks POST back to /api/hooks/claude)
+                                   ├─ terminal "setup", "dev-<name>": the project's setup and dev servers
+                                   └─ /ws/terminal/<id> ⇄ screen snapshot + live output (any number of viewers)
 ```
 
-- Sessions live on a **dedicated tmux server** (`tmux -L remote-ai`), so they never mix with your own tmux sessions. Attach from SSH with `tmux -L remote-ai attach -t <project>__<branch>`.
-- Hooks are passed with `claude --settings`, so your `~/.claude/settings.json` is never modified.
+- The **session host** owns every terminal (node-pty, with a headless xterm per terminal that keeps the screen and scrollback). It runs apart from the dashboard server, so restarting or updating the server never touches your sessions. It starts by itself when the server first needs it, and logs to `~/.remote-ai/host.log`.
+- Agents run behind an **adapter** (`server/src/agents/`). Claude Code is the only one so far; its launch flags, hooks, menus and transcript all live in `agents/claude/`.
+- Hooks are passed with `claude --settings`, so your `~/.claude/settings.json` is never modified. They are HTTP hooks (SessionStart, which Claude Code only runs as a command, posts with curl).
 - Each session gets a `PORT` environment variable (3100, 3110, …) for its dev server.
 
-## Requirements
+## Desktop app
+
+Download the installer for your OS from the [releases](https://github.com/ncoop720/remote-ai/releases): a `.dmg` for macOS, an `.exe` for Windows, an `.AppImage` or `.deb` for Linux. On first start the app opens a checklist: it checks for git, installs Claude Code with Anthropic's official installer and runs its sign-in if needed, and asks for the repositories to add.
+
+- The app lives in the tray (the menu bar on macOS) and starts at login; closing the window keeps it running. **Quit** leaves sessions running in the session host, and the next start picks them up again. **Stop all sessions and quit** ends them.
+- Notifications come from the app itself, so the dashboard's bell (Web Push, for phones) is hidden in its window.
+- Updates download from GitHub releases in the background; **Restart to update** in the tray or the sidebar installs them. Sessions keep running through an update, because the session host runs from its own copy outside the app (`~/.remote-ai/host-runtime/`), which only changes when the host itself does.
+- Data, logs and settings live in `~/.remote-ai`, as with the server. The window is served on `127.0.0.1:8787`; set `"port"` in `~/.remote-ai/config.json` to change it.
+- The builds aren't code-signed yet, so macOS and Windows warn the first time you open the app, and macOS won't install updates by itself. Only the AppImage updates itself on Linux.
+
+To build it yourself: `npm run desktop:start` runs it from source (with its own data in `~/.remote-ai-desktop-dev`), and `npm run desktop:dist` makes installers for this OS in `dist/release`. Pushing a `v*` tag builds all three on GitHub Actions (`.github/workflows/desktop.yml`) and drafts a release.
+
+## Server install (Linux)
+
+### Requirements
 
 A Linux machine (a VPS, or WSL2 on Windows) with:
 
 - Node.js 22+
-- tmux 3.2+
 - git, curl
 - Build tools for `node-pty`: `sudo apt install build-essential python3`
 - Claude Code, logged in (`claude` then `/login`)
 
-## Install
+### Install
 
 ```bash
 git clone https://github.com/ncoop720/remote-ai.git ~/code/remote-ai
 ~/code/remote-ai/scripts/install.sh
 ```
 
-The script checks the requirements, builds, and installs a **systemd user service** (`remote-ai`) that starts at boot and restarts on failure. Stopping or restarting the service never touches your sessions: Claude runs in tmux, outside the service (`KillMode=process`). Logs: `journalctl --user -u remote-ai -f`.
+The script checks the requirements, builds, and installs a **systemd user service** (`remote-ai`) that starts at boot and restarts on failure. Stopping or restarting the service never touches your sessions: Claude runs in the session host, outside the service's main process (`KillMode=process`). Logs: `journalctl --user -u remote-ai -f`.
 
 Options: `--tailscale` (serve it on your tailnet), `--wsl-autostart` (WSL only, see below), `--port N`, `--no-service` (just build; run `npm start` yourself), `--uninstall`.
 
@@ -64,7 +79,7 @@ Https matters: it's what lets the phone install the dashboard as an app and rece
 
 ### Password (optional)
 
-Set `REMOTE_AI_PASSWORD` (or `"password"` in `~/.remote-ai/config.json`) to require a login for requests that arrive through a proxy such as `tailscale serve` or from another machine. Requests made on the machine itself are trusted, since anything that can make them can already run tmux and git. Logins last 30 days.
+Set `REMOTE_AI_PASSWORD` (or `"password"` in `~/.remote-ai/config.json`) to require a login for requests that arrive through a proxy such as `tailscale serve` or from another machine. Requests made on the machine itself are trusted, since anything that can make them can already run programs as you. Logins last 30 days.
 
 Don't expose the dashboard to the public internet: anyone who can open it gets a shell on the machine.
 
@@ -82,8 +97,8 @@ Describe a project's dev servers in `.remote-ai.json` at the repo root:
 }
 ```
 
-- **setup** runs once in every new worktree (each command from the worktree root), in a `setup` tmux window that closes itself when it succeeds. Rerun it from the Logs panel.
-- **servers** each run in their own tmux window (`dev-<name>`). A server gets `$PORT`, and every command gets `$PORT_<NAME>` for all servers, so a frontend can find its backend. Ports come from the session's block (3100–3109 for the first worktree, 3110–3119 for the next, …).
+- **setup** runs once in every new worktree (each command from the worktree root), in a `setup` terminal; its exit code says whether it worked. Rerun it from the Logs panel.
+- **servers** each run in their own terminal (`dev-<name>`), through your shell (`cmd.exe` on Windows, where `$PORT`-style variables are filled in for you). A server gets `$PORT`, and every command gets `$PORT_<NAME>` for all servers, so a frontend can find its backend. Ports come from the session's block (3100–3109 for the first worktree, 3110–3119 for the next, …).
 - The file can be committed, or left uncommitted in the main checkout: worktrees without their own copy use the main checkout's.
 - Without a config file, a repo whose `package.json` has a `dev` script gets `npm run dev` (and `npm ci` as setup).
 
@@ -99,7 +114,7 @@ The bell turns on **push notifications** for that device: one when a session nee
 
 ## Updating
 
-Use **Check for updates** at the bottom of the sidebar (or the session list on a phone). It pulls, reinstalls dependencies if they changed, rebuilds, and, when running as the service, restarts the server. Claude sessions and dev servers keep running in tmux, and open pages reconnect by themselves. By hand:
+Use **Check for updates** at the bottom of the sidebar (or the session list on a phone). It pulls, reinstalls dependencies if they changed, rebuilds, and, when running as the service, restarts the server. Claude sessions and dev servers keep running in the session host, and open pages reconnect by themselves. By hand:
 
 ```bash
 cd ~/code/remote-ai && git pull && npm ci && npm run build && systemctl --user restart remote-ai
@@ -117,8 +132,7 @@ Set environment variables, or put the same keys (camelCase) in `~/.remote-ai/con
 | `REMOTE_AI_HOST` | `127.0.0.1` | Bind address |
 | `REMOTE_AI_PROJECTS_DIR` | `~/projects` | Where project checkouts live |
 | `REMOTE_AI_WORKTREES_DIR` | `~/worktrees` | Where new worktrees are created |
-| `REMOTE_AI_DATA_DIR` | `~/.remote-ai` | State, generated tmux.conf, hook settings |
-| `REMOTE_AI_TMUX_SOCKET` | `remote-ai` | Name of the dedicated tmux server |
+| `REMOTE_AI_DATA_DIR` | `~/.remote-ai` | State, logs, hook settings, the session host's socket |
 | `REMOTE_AI_CLAUDE_COMMAND` | `claude` | Command used to start Claude Code |
 | `REMOTE_AI_PORT_BASE` | `3100` | First dev-server port |
 
@@ -130,7 +144,7 @@ npm test           # unit tests (node:test)
 npm run typecheck
 ```
 
-The server needs Linux (tmux), so develop inside WSL2 or on the server itself.
+The session host started by `npm run dev` runs from source and keeps running when the server restarts. After changing `server/src/host/`, stop your sessions and kill the host (its pid is in `~/.remote-ai/host.log`) so the next request starts the new one.
 
 ## Roadmap
 
@@ -138,3 +152,11 @@ The server needs Linux (tmux), so develop inside WSL2 or on the server itself.
 - [x] Phase 2: per-project dev servers and setup, streaming logs, port detection and page preview
 - [x] Phase 3: phone chat view built from the session transcript, push notifications
 - [x] Phase 4: install script (systemd service, Tailscale, WSL autostart), optional password, self-update
+
+v2:
+
+- [x] Session host and agent adapters: native terminals on macOS, Windows and Linux instead of tmux; Claude Code as the first adapter
+- [x] Desktop app: installers, tray, start at login, updates, first-run checklist
+- [ ] Pairing: QR code for phones, then built-in Tailscale with https
+- [ ] Preview through the app's secure address
+- [ ] Dev-server detection, and Set up with Claude

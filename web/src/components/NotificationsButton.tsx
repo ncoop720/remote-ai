@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { errorMessage } from '../api';
+import { desktopApp } from '../desktop';
 import { disablePush, enablePush, PUSH_HINT, pushState, type PushState } from '../push';
 
 function Bell({ off }: { off: boolean }) {
@@ -27,7 +28,8 @@ export function NotificationsButton() {
     return () => clearTimeout(t);
   }, [message]);
 
-  if (!state) return null;
+  // The desktop app shows notifications itself, and its window has no push service.
+  if (!state || desktopApp) return null;
   const on = state === 'on';
 
   const click = async () => {

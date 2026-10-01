@@ -6,11 +6,11 @@ import { test } from 'node:test';
 import { noticeFor, PushService, type Sender } from './push.js';
 import type { SessionStatus } from '../../shared/types.js';
 
-const label = { id: 'game__feat-x', project: 'game', branch: 'feat/x' };
+const label = { id: 'game__feat-x', project: 'game', branch: 'feat/x', agent: 'Claude Code' };
 const s = (state: SessionStatus['state'], extra: Partial<SessionStatus> = {}): SessionStatus => ({ state, updatedAt: 1, ...extra });
 
 test('a permission request notifies with the command', () => {
-  const n = noticeFor(label, s('working'), s('needs_input', { tool: { name: 'Bash', input: { command: 'pnpm add x' } } }));
+  const n = noticeFor(label, s('working'), s('needs_input', { tool: { name: 'Bash', input: { command: 'pnpm add x' }, summary: 'pnpm add x' } }));
   assert.deepEqual(n, { title: 'game / feat/x needs you', body: 'Bash: pnpm add x', tag: 'game__feat-x', url: '/#/s/game__feat-x' });
 });
 
@@ -24,6 +24,7 @@ test('finishing a turn notifies with the reply; idle reminders do not', () => {
   assert.equal(n?.body, 'All 3 tests pass.');
   assert.equal(noticeFor(label, s('idle'), s('idle', { message: 'Claude is waiting for your input' })), null);
   assert.equal(noticeFor(label, s('unknown'), s('working')), null);
+  assert.equal(noticeFor(label, s('working'), s('idle'))?.body, 'Claude Code finished its turn');
 });
 
 test('subscriptions persist, and expired ones are dropped when a send gets 410', async () => {

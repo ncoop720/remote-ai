@@ -37,7 +37,7 @@ function ConfigHelp({ session }: { session: SessionInfo }) {
         <p>No dev servers are set up for {session.project}.</p>
       )}
       <p className="muted">
-        Add a <code>.remote-ai.json</code> to the repo (or just to the main checkout). Each server runs in its own tmux window
+        Add a <code>.remote-ai.json</code> to the repo (or just to the main checkout). Each server runs in its own terminal
         and gets <code>$PORT</code>, plus <code>$PORT_&lt;NAME&gt;</code> for every server:
       </p>
       <pre>{`{

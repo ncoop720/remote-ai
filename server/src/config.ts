@@ -5,14 +5,12 @@ import path from 'node:path';
 export interface Config {
   host: string;
   port: number;
-  /** Directory whose git checkouts are the projects. */
-  projectsDir: string;
+  /** Every git checkout in this directory is a project, besides those added one by one. Null for none. */
+  projectsDir: string | null;
   /** Where new worktrees are created: `<worktreesDir>/<project>/<branch>`. */
   worktreesDir: string;
-  /** Holds state.json, the generated tmux.conf, claude-settings.json and the hook token. */
+  /** Holds state.json, logs, claude-settings.json, and the session host's socket, token and log. */
   dataDir: string;
-  /** Dedicated tmux server (`tmux -L <socket>`) so our sessions never mix with yours. */
-  tmuxSocket: string;
   claudeCommand: string;
   /** First dev-server port; each session gets a block of `portStep` ports. */
   portBase: number;
@@ -29,10 +27,13 @@ export function expandHome(p: string): string {
   return p;
 }
 
-/** Settings come from env vars, then `<dataDir>/config.json`, then defaults. */
-export function loadConfig(): Config {
+/**
+ * Settings come from env vars, then `<dataDir>/config.json`, then `defaults` (which the desktop app
+ * uses for its own data folder and to leave out the projects directory), then built-in defaults.
+ */
+export function loadConfig(defaults: Partial<Config> = {}): Config {
   const env = process.env;
-  const dataDir = path.resolve(expandHome(env.REMOTE_AI_DATA_DIR ?? '~/.remote-ai'));
+  const dataDir = path.resolve(expandHome(env.REMOTE_AI_DATA_DIR ?? defaults.dataDir ?? '~/.remote-ai'));
   fs.mkdirSync(dataDir, { recursive: true });
 
   const configPath = path.join(dataDir, 'config.json');
@@ -40,16 +41,17 @@ export function loadConfig(): Config {
     ? (JSON.parse(fs.readFileSync(configPath, 'utf8')) as Partial<Config>)
     : {};
 
+  const projectsDir =
+    env.REMOTE_AI_PROJECTS_DIR ?? (file.projectsDir !== undefined ? file.projectsDir : defaults.projectsDir !== undefined ? defaults.projectsDir : '~/projects');
   return {
-    host: env.REMOTE_AI_HOST ?? file.host ?? '127.0.0.1',
-    port: Number(env.REMOTE_AI_PORT ?? file.port ?? 8787),
-    projectsDir: path.resolve(expandHome(env.REMOTE_AI_PROJECTS_DIR ?? file.projectsDir ?? '~/projects')),
-    worktreesDir: path.resolve(expandHome(env.REMOTE_AI_WORKTREES_DIR ?? file.worktreesDir ?? '~/worktrees')),
+    host: env.REMOTE_AI_HOST ?? file.host ?? defaults.host ?? '127.0.0.1',
+    port: Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787),
+    projectsDir: projectsDir ? path.resolve(expandHome(projectsDir)) : null,
+    worktreesDir: path.resolve(expandHome(env.REMOTE_AI_WORKTREES_DIR ?? file.worktreesDir ?? defaults.worktreesDir ?? '~/worktrees')),
     dataDir,
-    tmuxSocket: env.REMOTE_AI_TMUX_SOCKET ?? file.tmuxSocket ?? 'remote-ai',
-    claudeCommand: env.REMOTE_AI_CLAUDE_COMMAND ?? file.claudeCommand ?? 'claude',
-    portBase: Number(env.REMOTE_AI_PORT_BASE ?? file.portBase ?? 3100),
-    portStep: Number(file.portStep ?? 10),
+    claudeCommand: env.REMOTE_AI_CLAUDE_COMMAND ?? file.claudeCommand ?? defaults.claudeCommand ?? 'claude',
+    portBase: Number(env.REMOTE_AI_PORT_BASE ?? file.portBase ?? defaults.portBase ?? 3100),
+    portStep: Number(file.portStep ?? defaults.portStep ?? 10),
     pushSubject: env.REMOTE_AI_PUSH_SUBJECT ?? file.pushSubject ?? 'https://github.com/ncoop720/remote-ai',
     password: env.REMOTE_AI_PASSWORD || file.password || undefined,
   };

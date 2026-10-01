@@ -73,7 +73,7 @@ function ToolRow({ tool, result, root, running }: { tool: Tool; result?: Result;
  * alongside the terminal rather than replacing it.
  */
 export function ChatView({ session }: { session: SessionInfo }) {
-  const items = useChat(session.id, session.status.claudeSessionId ?? '');
+  const items = useChat(session.id, session.status.agentSessionId ?? '');
   const working = session.status.state === 'working';
   const scroller = useRef<HTMLDivElement>(null);
   const [follow, setFollow] = useState(true);

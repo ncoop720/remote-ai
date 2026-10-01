@@ -67,7 +67,7 @@ function StoppedPanel({ session, onChanged }: { session: SessionInfo; onChanged:
 
   return (
     <div className="stopped-panel">
-      <p>No tmux session is running for this worktree.</p>
+      <p>Claude isn't running in this worktree.</p>
       <label className="field">
         <span>Permissions</span>
         <select value={mode} onChange={(e) => setMode(e.target.value as PermissionMode)}>

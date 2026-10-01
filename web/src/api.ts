@@ -2,9 +2,14 @@ import type {
   CreateSessionRequest,
   DevAction,
   ProjectInfo,
+  SetupInfo,
   StartSessionRequest,
+  UpdateResult,
+  VersionInfo,
   VisiblePrompt,
 } from '../../shared/types';
+
+export type { UpdateResult, VersionInfo };
 
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
   const res = await fetch(url, {
@@ -49,24 +54,13 @@ export const api = {
   logout: () => request<{ ok: boolean }>('POST', '/api/logout'),
   version: (fetchUpstream = false) => request<VersionInfo>('GET', `/api/version${fetchUpstream ? '?fetch=1' : ''}`),
   update: () => request<UpdateResult>('POST', '/api/update'),
+  setup: () => request<SetupInfo>('GET', '/api/setup'),
+  /** Starts the agent's installer or sign-in in a terminal; returns the terminal to show. */
+  agentTask: (agent: string, task: 'install' | 'signin') =>
+    request<{ session: string; name: string }>('POST', `/api/agents/${encodeURIComponent(agent)}/${task}`),
+  addProject: (path: string) => request<{ name: string }>('POST', '/api/projects', { path }),
+  removeProject: (name: string) => request<void>('DELETE', `/api/projects/${encodeURIComponent(name)}`),
 };
-
-export interface VersionInfo {
-  commit: string;
-  branch: string;
-  behind: number | null;
-  dirty: boolean;
-  managed: boolean;
-}
-
-export interface UpdateResult {
-  ok: boolean;
-  from: string;
-  to: string;
-  restartNeeded: boolean;
-  restarting: boolean;
-  log: string[];
-}
 
 export function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);

@@ -1,0 +1,39 @@
+# Packages the desktop app that scripts/build-desktop.mjs builds (npm run desktop:dist).
+appId: io.github.ncoop720.remote-ai # also APP_ID in desktop/main.ts
+productName: remote-ai
+directories:
+  app: dist/desktop
+  output: dist/release
+  buildResources: desktop/build
+files:
+  - '**/*'
+  - '!**/*.map'
+  # Everything is bundled into main.mjs; without this electron-builder adds the repo's own node_modules.
+  - '!node_modules{,/**/*}'
+npmRebuild: false
+# The session host runtime for this OS and architecture. The app copies it out of itself at start,
+# so the host keeps running while the app quits or updates.
+extraResources:
+  - from: dist/host-runtime/${os}-${arch}
+    to: host
+mac:
+  target: [dmg, zip] # electron-updater installs from the zip
+  category: public.app-category.developer-tools
+  # Unsigned until there is an Apple Developer ID: macOS warns on first open and won't apply updates.
+  identity: null
+win:
+  target: nsis
+nsis:
+  oneClick: true
+  perMachine: false
+linux:
+  target: [AppImage, deb] # only the AppImage updates itself
+  category: Development
+  synopsis: Coding agents on this computer, from any device
+  syncDesktopName: true
+  maintainer: ncoop720 <ncoop720@users.noreply.github.com>
+publish:
+  provider: github
+  owner: ncoop720
+  repo: remote-ai
+  releaseType: draft

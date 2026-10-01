@@ -55,7 +55,7 @@ if [ "$UNINSTALL" = 1 ]; then
     systemctl --user disable --now "$NAME.service" || true
     rm -f "$UNIT"
     systemctl --user daemon-reload
-    ok "Removed the $NAME service. Running Claude sessions keep going in tmux (tmux -L remote-ai ls)."
+    ok "Removed the $NAME service. Running Claude sessions keep going in the session host until you stop them."
   else
     warn "No $NAME service to remove."
   fi
@@ -71,7 +71,6 @@ missing=()
 need() { command -v "$1" >/dev/null 2>&1 || missing+=("$2"); }
 need node nodejs
 need npm npm
-need tmux tmux
 need git git
 need curl curl
 need make build-essential
@@ -82,10 +81,8 @@ if [ ${#missing[@]} -gt 0 ]; then
   fail "Missing: ${pkgs}— on Ubuntu or Debian: sudo apt install ${pkgs}"
 fi
 [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] || fail "Node.js 22 or newer is required (found $(node -v))."
-tmux_version=$(tmux -V | grep -oE '[0-9]+\.[0-9]+' | head -1)
-awk "BEGIN { exit !($tmux_version >= 3.2) }" || fail "tmux 3.2 or newer is required (found $tmux_version)."
 if command -v claude >/dev/null 2>&1 || [ -x "$HOME/.local/bin/claude" ]; then
-  ok "Node $(node -v), tmux $tmux_version, Claude Code found"
+  ok "Node $(node -v), Claude Code found"
 else
   warn "Claude Code isn't installed yet: curl -fsSL https://claude.ai/install.sh | bash"
 fi
@@ -121,7 +118,7 @@ if [ "$SERVICE" = 1 ]; then
       for kv in "${EXTRA_ENV[@]}"; do echo "Environment=$kv"; done
       echo "Restart=always"
       echo "RestartSec=2"
-      echo "# Stop only the dashboard: the tmux server it started, with every Claude session, keeps running."
+      echo "# Stop only the dashboard: the session host it started, with every Claude session, keeps running."
       echo "KillMode=process"
       echo
       echo "[Install]"

@@ -29,10 +29,10 @@ const THEME = {
   brightWhite: '#FFFFFF',
 };
 
-type ConnState = 'connecting' | 'open' | 'reconnecting' | 'not-running';
+type ConnState = 'connecting' | 'open' | 'reconnecting' | 'not-running' | 'exited';
 
-/** A live view of one tmux window, reconnecting on its own after network drops. */
-export function Terminal({ sessionId, window = 'claude', fontSize }: { sessionId: string; window?: string; fontSize: number }) {
+/** A live view of one of a session's terminals (the agent's by default), reconnecting on its own after network drops. */
+export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: string; name?: string; fontSize: number }) {
   const host = useRef<HTMLDivElement>(null);
   const [conn, setConn] = useState<ConnState>('connecting');
 
@@ -63,18 +63,18 @@ export function Terminal({ sessionId, window = 'claude', fontSize }: { sessionId
     const connect = () => {
       if (disposed) return;
       const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-      const qs = new URLSearchParams({ window, cols: String(term.cols), rows: String(term.rows) });
+      const qs = new URLSearchParams({ name, cols: String(term.cols), rows: String(term.rows) });
       ws = new WebSocket(`${proto}://${location.host}/ws/terminal/${encodeURIComponent(sessionId)}?${qs}`);
       ws.onopen = () => {
         attempt = 0;
-        term.reset(); // tmux repaints the whole screen on attach
+        term.reset(); // the server starts with a snapshot of the whole screen
         setConn('open');
       };
       ws.onmessage = (ev) => term.write(typeof ev.data === 'string' ? ev.data : new Uint8Array(ev.data as ArrayBuffer));
       ws.onclose = (ev) => {
         if (disposed) return;
-        if (ev.code === 4404) {
-          setConn('not-running');
+        if (ev.code === 4404 || ev.code === 4410) {
+          setConn(ev.code === 4404 ? 'not-running' : 'exited');
           return;
         }
         setConn('reconnecting');
@@ -109,13 +109,14 @@ export function Terminal({ sessionId, window = 'claude', fontSize }: { sessionId
       ws?.close();
       term.dispose();
     };
-  }, [sessionId, window, fontSize]);
+  }, [sessionId, name, fontSize]);
 
   return (
     <div className="terminal-wrap">
       <div className="terminal" ref={host} />
       {conn === 'reconnecting' && <div className="terminal-banner">Reconnecting…</div>}
       {conn === 'not-running' && <div className="terminal-banner">This session isn't running.</div>}
+      {conn === 'exited' && <div className="terminal-banner">The program has exited.</div>}
     </div>
   );
 }

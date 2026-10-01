@@ -1,4 +1,4 @@
-import type { PromptOption, VisiblePrompt } from '../../shared/types.js';
+import type { PromptOption, VisiblePrompt } from '../../../../shared/types.js';
 
 // The highlighted choice in a Claude Code menu: "❯ Yes", "❯ 1. Yes", or "> 1. Yes" in older versions,
 // optionally inside a box border.

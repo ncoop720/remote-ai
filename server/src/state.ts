@@ -6,9 +6,13 @@ interface StateData {
   ports: Record<string, number>;
   /** Branch each worktree was created from, used for "commits ahead". */
   bases: Record<string, string>;
+  /** Agent adapter each worktree's sessions run. */
+  agents: Record<string, string>;
+  /** Main checkouts added as projects, wherever they are. */
+  projects: string[];
 }
 
-/** Small JSON file for facts that must outlive tmux sessions (which die on reboot). */
+/** Small JSON file for facts that must outlive the session host (whose terminals end on reboot). */
 export class StateStore {
   private readonly file: string;
   private data: StateData;
@@ -20,8 +24,8 @@ export class StateStore {
   ) {
     this.file = path.join(dataDir, 'state.json');
     this.data = fs.existsSync(this.file)
-      ? { ports: {}, bases: {}, ...(JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<StateData>) }
-      : { ports: {}, bases: {} };
+      ? { ports: {}, bases: {}, agents: {}, projects: [], ...(JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<StateData>) }
+      : { ports: {}, bases: {}, agents: {}, projects: [] };
   }
 
   private save(): void {
@@ -54,9 +58,35 @@ export class StateStore {
     this.save();
   }
 
+  agentFor(worktreePath: string): string | null {
+    return this.data.agents[worktreePath] ?? null;
+  }
+
+  setAgent(worktreePath: string, agent: string): void {
+    if (this.data.agents[worktreePath] === agent) return;
+    this.data.agents[worktreePath] = agent;
+    this.save();
+  }
+
+  projects(): string[] {
+    return [...this.data.projects];
+  }
+
+  addProject(repoPath: string): void {
+    if (this.data.projects.includes(repoPath)) return;
+    this.data.projects.push(repoPath);
+    this.save();
+  }
+
+  removeProject(repoPath: string): void {
+    this.data.projects = this.data.projects.filter((p) => p !== repoPath);
+    this.save();
+  }
+
   forget(worktreePath: string): void {
     delete this.data.ports[worktreePath];
     delete this.data.bases[worktreePath];
+    delete this.data.agents[worktreePath];
     this.save();
   }
 }

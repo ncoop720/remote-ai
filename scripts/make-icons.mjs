@@ -1,4 +1,4 @@
-// Draws the app icons into web/public (run once: node scripts/make-icons.mjs). No dependencies:
+// Draws the app icons into web/public and desktop/ (run once: node scripts/make-icons.mjs). No dependencies:
 // shapes are rasterised with 4x4 supersampling and written with a minimal PNG encoder.
 import fs from 'node:fs';
 import zlib from 'node:zlib';
@@ -54,7 +54,7 @@ const shapes = [
   { color: AMBER, dot: true, hit: (x, y) => Math.hypot(x - 0.7, y - 0.34) < 0.07 },
 ];
 
-function render(size, { background, monochrome }) {
+function render(size, { background, monochrome, ink = [255, 255, 255] }) {
   const out = Buffer.alloc(size * size * 4);
   const S = 4;
   for (let y = 0; y < size; y++) {
@@ -68,7 +68,7 @@ function render(size, { background, monochrome }) {
         }
         const k = cover / (S * S);
         if (k === 0) continue;
-        const [cr, cg, cb] = monochrome ? [255, 255, 255] : shape.color;
+        const [cr, cg, cb] = monochrome ? ink : shape.color;
         r = r * (1 - k) + cr * k;
         g = g * (1 - k) + cg * k;
         b = b * (1 - k) + cb * k;
@@ -80,14 +80,22 @@ function render(size, { background, monochrome }) {
   return png(size, out);
 }
 
-const dir = new URL('../web/public/', import.meta.url);
-fs.mkdirSync(dir, { recursive: true });
+const BLACK = [0, 0, 0];
 for (const [name, size, opts] of [
-  ['icon-192.png', 192, { background: '#121110' }],
-  ['icon-512.png', 512, { background: '#121110' }],
-  ['apple-touch-icon.png', 180, { background: '#121110' }],
-  ['badge-96.png', 96, { monochrome: true }],
+  ['web/public/icon-192.png', 192, { background: '#121110' }],
+  ['web/public/icon-512.png', 512, { background: '#121110' }],
+  ['web/public/apple-touch-icon.png', 180, { background: '#121110' }],
+  ['web/public/badge-96.png', 96, { monochrome: true }],
+  // electron-builder makes the .icns and .ico from this.
+  ['desktop/build/icon.png', 1024, { background: '#121110' }],
+  // Windows and Linux trays; macOS menu-bar icons are black "template" images the system tints.
+  ['desktop/assets/tray.png', 16, { background: '#121110' }],
+  ['desktop/assets/tray@2x.png', 32, { background: '#121110' }],
+  ['desktop/assets/trayTemplate.png', 16, { monochrome: true, ink: BLACK }],
+  ['desktop/assets/trayTemplate@2x.png', 32, { monochrome: true, ink: BLACK }],
 ]) {
-  fs.writeFileSync(new URL(name, dir), render(size, opts));
+  const file = new URL(`../${name}`, import.meta.url);
+  fs.mkdirSync(new URL('.', file), { recursive: true });
+  fs.writeFileSync(file, render(size, opts));
   console.log('wrote', name);
 }

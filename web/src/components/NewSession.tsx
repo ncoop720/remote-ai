@@ -11,7 +11,7 @@ const MODES: { id: PermissionMode; label: string }[] = [
   { id: 'plan', label: 'Plan' },
 ];
 
-/** Creates a worktree for a branch (or reuses one) and starts Claude in a tmux session there. */
+/** Creates a worktree for a branch (or reuses one) and starts Claude there. */
 export function NewSession({ projects, initialProject, onCreated }: {
   projects: ProjectInfo[];
   initialProject?: string;

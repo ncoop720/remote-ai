@@ -1,0 +1,50 @@
+# Builds the desktop app on each OS. A tag like v2.0.0 publishes the installers to a draft
+# GitHub release, which the installed apps update from once it is published.
+name: Desktop app
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            targets: mac-x64,mac-arm64
+            builder: --mac --x64 --arm64
+          - os: windows-latest
+            targets: win-x64
+            builder: --win --x64
+          - os: ubuntu-latest
+            targets: linux-x64
+            builder: --linux --x64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: node scripts/build-desktop.mjs --targets ${{ matrix.targets }}
+      - run: npx electron-builder ${{ matrix.builder }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: remote-ai-${{ matrix.os }}
+          path: |
+            dist/release/*.dmg
+            dist/release/*.zip
+            dist/release/*.exe
+            dist/release/*.AppImage
+            dist/release/*.deb
+          if-no-files-found: error

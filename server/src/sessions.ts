@@ -1,25 +1,27 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import type { Config } from './config.js';
 import * as git from './git.js';
 import type { Worktree } from './git.js';
-import { buildClaudeCommand } from './claude.js';
+import type { AgentAdapter, AgentRegistry } from './agents/index.js';
 import type { DevManager } from './dev.js';
 import { loadProjectConfig } from './devconfig.js';
 import { HttpError } from './errors.js';
+import { expandHome, type Config } from './config.js';
 import { sessionId, slug } from './ids.js';
+import type { HostClient } from './hostclient.js';
+import type { TermInfo, TermRef } from './host/protocol.js';
 import { listeningPorts } from './ports.js';
-import { parseVisiblePrompt } from './prompt.js';
-import { findTranscript } from './transcript.js';
+import type { SessionLabel } from './push.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
-import type { Tmux } from './tmux.js';
 import type {
+  ChatItem,
   CreateSessionRequest,
   DevAction,
   ListeningPort,
   PermissionMode,
   ProjectInfo,
+  ProjectSource,
   SessionInfo,
   StartSessionRequest,
   VisiblePrompt,
@@ -35,9 +37,19 @@ interface WorktreeRef {
   isMain: boolean;
 }
 
-/** Keys the mobile key bar may send. Names are tmux key names. */
+/** A main git checkout: worktrees have a `.git` file, not a directory. */
+function isMainCheckout(dir: string): boolean {
+  try {
+    return fs.statSync(path.join(dir, '.git')).isDirectory();
+  } catch {
+    return false;
+  }
+}
+
+/** Keys the mobile key bar may send. */
 const ALLOWED_KEYS = new Set(['Escape', 'C-c', 'BTab', 'Tab', 'Up', 'Down', 'Left', 'Right', 'Enter']);
-const CLAUDE_WINDOW = 'claude';
+/** The host terminal the session's agent runs in. */
+export const AGENT_TERMINAL = 'agent';
 const CACHE_MS = 1500;
 
 export class SessionManager {
@@ -46,10 +58,10 @@ export class SessionManager {
 
   constructor(
     private readonly cfg: Config,
-    private readonly tmux: Tmux,
+    private readonly host: HostClient,
     private readonly state: StateStore,
     private readonly statuses: StatusStore,
-    private readonly settingsPath: string,
+    private readonly agents: AgentRegistry,
     private readonly dev: DevManager,
   ) {}
 
@@ -57,21 +69,52 @@ export class SessionManager {
     this.cache = null;
   }
 
-  /** Every directory in projectsDir that is a main git checkout (worktrees have a `.git` file, not a dir). */
-  private discoverProjects(): { name: string; path: string }[] {
-    if (!fs.existsSync(this.cfg.projectsDir)) return [];
-    return fs
-      .readdirSync(this.cfg.projectsDir, { withFileTypes: true })
-      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
-      .map((d) => ({ name: d.name, path: path.join(this.cfg.projectsDir, d.name) }))
-      .filter((p) => {
-        try {
-          return fs.statSync(path.join(p.path, '.git')).isDirectory();
-        } catch {
-          return false;
-        }
-      })
-      .sort((a, b) => a.name.localeCompare(b.name));
+  /**
+   * Projects are the folders added one by one, then every main checkout in projectsDir. Names must
+   * be unique (they start session ids), so a later folder with a name already taken is skipped.
+   */
+  private discoverProjects(): { name: string; path: string; source: ProjectSource }[] {
+    const found: { name: string; path: string; source: ProjectSource }[] = [];
+    const add = (p: string, source: ProjectSource) => {
+      const name = path.basename(p);
+      if (isMainCheckout(p) && !found.some((f) => f.name === name || f.path === p)) found.push({ name, path: p, source });
+    };
+    for (const p of this.state.projects()) add(p, 'added');
+    const dir = this.cfg.projectsDir;
+    if (dir && fs.existsSync(dir)) {
+      for (const d of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (d.isDirectory() && !d.name.startsWith('.')) add(path.join(dir, d.name), 'folder');
+      }
+    }
+    return found.sort((a, b) => a.name.localeCompare(b.name));
+  }
+
+  /** Add a main checkout anywhere on this computer as a project. */
+  async addProject(input: string): Promise<string> {
+    const repo = typeof input === 'string' && input.trim() ? path.resolve(expandHome(input.trim())) : '';
+    if (!repo || !fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) throw new HttpError(400, 'Choose an existing folder');
+    if (!isMainCheckout(repo)) {
+      if (fs.existsSync(path.join(repo, '.git'))) throw new HttpError(400, "That folder is a git worktree; add the repository's main checkout instead");
+      throw new HttpError(400, 'That folder is not a git repository. Run git init there first, or pick a repository.');
+    }
+    const name = path.basename(repo);
+    const existing = this.discoverProjects();
+    if (existing.some((p) => p.path === repo)) return name;
+    if (existing.some((p) => p.name === name)) throw new HttpError(409, `There is already a project named ${name}`);
+    this.state.addProject(repo);
+    this.invalidate();
+    return name;
+  }
+
+  /** Stop listing a project that was added by hand. Nothing on disk changes. */
+  async removeProject(name: string): Promise<void> {
+    const project = this.discoverProjects().find((p) => p.name === name);
+    if (!project) throw new HttpError(404, `Unknown project ${name}`);
+    if (project.source !== 'added') throw new HttpError(400, `${name} is in the projects folder, so it can't be removed here`);
+    const running = (await this.host.list()).some((t) => t.alive && t.session.startsWith(`${slug(name)}__`));
+    if (running) throw new HttpError(409, `Stop ${name}'s sessions first`);
+    this.state.removeProject(project.path);
+    this.invalidate();
   }
 
   async listProjects(): Promise<ProjectInfo[]> {
@@ -84,13 +127,13 @@ export class SessionManager {
   }
 
   private async scan(): Promise<ProjectInfo[]> {
-    const [projects, tmuxSessions, windows, ports] = await Promise.all([
+    const [projects, terms, ports] = await Promise.all([
       Promise.resolve(this.discoverProjects()),
-      this.tmux.listSessions(),
-      this.tmux.listWindows(),
+      this.host.list(),
       listeningPorts(),
     ]);
-    const running = new Set(tmuxSessions.map((s) => s.name));
+    const termsBySession = new Map<string, TermInfo[]>();
+    for (const t of terms) termsBySession.set(t.session, [...(termsBySession.get(t.session) ?? []), t]);
     const index: WorktreeRef[] = [];
     const selfPort = this.cfg.port;
     // A port belongs to the worktree its process runs in; nested paths go to the longest match.
@@ -119,28 +162,29 @@ export class SessionManager {
               git.dirtyCount(wt.path).catch(() => 0),
               base ? git.aheadOf(wt.path, base) : Promise.resolve(null),
             ]);
-            const isRunning = running.has(id);
-            const sessionWindows = windows.get(id) ?? [];
+            const sessionTerms = termsBySession.get(id) ?? [];
+            const isRunning = sessionTerms.some((t) => t.name === AGENT_TERMINAL && t.alive);
             const config = loadProjectConfig(wt.path, p.path);
             return {
               id,
+              agent: this.agentFor(wt.path).id,
               project: p.name,
               branch: wt.branch,
               path: wt.path,
               isMain,
               running: isRunning,
-              windows: sessionWindows,
+              terminals: sessionTerms.map(({ name, alive, exitCode, startedAt }) => ({ name, alive, exitCode, startedAt })),
               port: this.state.portFor(wt.path),
               dirty,
               ahead,
               base,
               status: isRunning ? this.statuses.get(id) : { state: 'stopped', updatedAt: 0 },
-              dev: this.dev.info({ id, path: wt.path }, config, sessionWindows),
+              dev: this.dev.info({ id, path: wt.path }, config, sessionTerms),
               ports: portsIn(wt.path, allPaths),
             };
           }),
         );
-        return { name: p.name, path: p.path, defaultBranch, sessions };
+        return { name: p.name, path: p.path, source: p.source, defaultBranch, sessions };
       }),
     );
 
@@ -149,7 +193,7 @@ export class SessionManager {
     return result;
   }
 
-  /** Rebuild the id → worktree index from git alone (no tmux, no status), which is cheap. */
+  /** Rebuild the id → worktree index from git alone (no host, no status), which is cheap. */
   private async refreshIndex(): Promise<void> {
     const index: WorktreeRef[] = [];
     for (const p of this.discoverProjects()) {
@@ -192,11 +236,31 @@ export class SessionManager {
     return match();
   }
 
+  /** The adapter a worktree's sessions run; sessions from before adapters existed ran Claude. */
+  private agentFor(worktreePath: string): AgentAdapter {
+    const id = this.state.agentFor(worktreePath);
+    return id && this.agents.has(id) ? this.agents.get(id) : this.agents.default;
+  }
+
+  /** An event an agent's hooks posted: find its session from the working directory and move its status. */
+  async applyAgentEvent(agentId: string, payload: unknown): Promise<string | null> {
+    const adapter = this.agents.get(agentId);
+    const cwd = adapter.hooks?.cwd(payload);
+    if (!adapter.hooks || !cwd) return null;
+    const id = await this.resolveByCwd(cwd);
+    if (!id) return null;
+    const reduce = adapter.hooks.reduce;
+    this.statuses.update(id, (prev) => reduce(prev, payload));
+    return id;
+  }
+
   async createSession(projectName: string, req: CreateSessionRequest): Promise<string> {
     const branch = req.branch?.trim();
     if (!branch || !(await git.isValidBranchName(branch))) throw new HttpError(400, 'Invalid branch name');
     const project = this.discoverProjects().find((p) => p.name === projectName);
     if (!project) throw new HttpError(404, `Unknown project ${projectName}`);
+    const agent = this.agents.get(req.agent);
+    if (req.permissionMode && !agent.modes.includes(req.permissionMode)) throw new HttpError(400, 'Invalid permission mode');
 
     const worktrees = await git.listWorktrees(project.path);
     let wtPath = worktrees.find((w) => w.branch === branch)?.path;
@@ -211,13 +275,14 @@ export class SessionManager {
       this.state.setBase(wtPath, base);
       created = true;
     }
+    this.state.setAgent(wtPath, agent.id);
 
     const id = sessionId(project.name, branch);
-    await this.startTmux(id, wtPath, project.path, { prompt: req.prompt, permissionMode: req.permissionMode });
+    await this.startAgent(id, wtPath, project.path, { prompt: req.prompt, mode: req.permissionMode });
     // A fresh worktree has no dependencies installed yet.
     const config = loadProjectConfig(wtPath, project.path);
     if (created && config.setup.length > 0 && !config.error) {
-      await this.dev.runSetup({ id, path: wtPath }, config, (await this.tmux.listWindows()).get(id) ?? []);
+      await this.dev.runSetup({ id, path: wtPath }, config);
     }
     this.invalidate();
     return id;
@@ -225,58 +290,55 @@ export class SessionManager {
 
   async startSession(id: string, req: StartSessionRequest): Promise<void> {
     const ref = await this.find(id);
-    await this.startTmux(id, ref.worktree.path, ref.projectPath, { resume: req.resume, permissionMode: req.permissionMode });
+    const agent = this.agentFor(ref.worktree.path);
+    if (req.permissionMode && !agent.modes.includes(req.permissionMode)) throw new HttpError(400, 'Invalid permission mode');
+    await this.startAgent(id, ref.worktree.path, ref.projectPath, { resume: req.resume, mode: req.permissionMode });
     this.invalidate();
   }
 
-  private async startTmux(
+  /** Start the worktree's agent in the host, unless it is already running there. */
+  private async startAgent(
     id: string,
     cwd: string,
     mainPath: string,
-    opts: { prompt?: string; permissionMode?: PermissionMode; resume?: boolean },
+    opts: { prompt?: string; mode?: PermissionMode; resume?: boolean },
   ): Promise<void> {
-    if (await this.tmux.hasSession(id)) return;
+    if (await this.agentRunning(id)) return;
+    const agent = this.agentFor(cwd);
     const port = this.state.allocatePort(cwd);
-    await this.tmux.newSession({
-      name: id,
-      cwd,
-      window: CLAUDE_WINDOW,
-      env: { PORT: String(port), REMOTE_AI_SESSION: id },
-    });
-    const appendSystemPrompt = this.dev.describeForClaude({ id, path: cwd }, loadProjectConfig(cwd, mainPath));
-    // Typed into an interactive shell (not passed as the window command) so the user's
-    // shell rc files set up PATH, and the shell survives if Claude exits.
-    const command = buildClaudeCommand({
-      claudeCommand: this.cfg.claudeCommand,
-      settingsPath: this.settingsPath,
-      appendSystemPrompt,
-      ...opts,
-    });
-    await this.tmux.sendText(this.target(id), command);
-    await this.tmux.sendKeys(this.target(id), ['Enter']);
+    const systemPrompt = this.dev.describeForAgent({ id, path: cwd }, loadProjectConfig(cwd, mainPath));
     this.statuses.reset(id);
+    try {
+      await this.host.spawn({
+        session: id,
+        name: AGENT_TERMINAL,
+        cwd,
+        argv: agent.launch({ ...opts, systemPrompt }),
+        env: { PORT: String(port), REMOTE_AI_SESSION: id },
+      });
+    } catch (err) {
+      throw new HttpError(500, (err as Error).message);
+    }
   }
 
   /** Start, stop or restart dev servers (all, or the one named), or rerun setup. */
   async devAction(id: string, action: DevAction, name?: string): Promise<void> {
     const ref = await this.find(id);
-    await this.requireRunning(id);
     const target = { id, path: ref.worktree.path };
     const config = loadProjectConfig(ref.worktree.path, ref.projectPath);
-    const windows = async () => (await this.tmux.listWindows()).get(id) ?? [];
     switch (action) {
       case 'setup':
-        await this.dev.runSetup(target, config, await windows());
+        await this.dev.runSetup(target, config);
         break;
       case 'start':
-        await this.dev.start(target, config, await windows(), name);
+        await this.dev.start(target, config, name);
         break;
       case 'stop':
         await this.dev.stop(target, config, name);
         break;
       case 'restart':
         await this.dev.stop(target, config, name);
-        await this.dev.start(target, config, await windows(), name);
+        await this.dev.start(target, config, name);
         break;
       default:
         throw new HttpError(400, `Unknown action ${String(action)}`);
@@ -284,17 +346,24 @@ export class SessionManager {
     this.invalidate();
   }
 
-  /** Project and branch for notifications; falls back to the id if the worktree is gone. */
-  async label(id: string): Promise<{ id: string; project: string; branch: string }> {
+  /** Project, branch and agent for notifications; falls back to the id if the worktree is gone. */
+  async label(id: string): Promise<SessionLabel> {
     const ref = await this.find(id).catch(() => null);
-    if (!ref) return { id, project: id.split('__')[0] ?? id, branch: id.split('__')[1] ?? '' };
-    return { id, project: ref.project, branch: ref.worktree.branch ?? path.basename(ref.worktree.path) };
+    if (!ref) return { id, project: id.split('__')[0] ?? id, branch: id.split('__')[1] ?? '', agent: this.agents.default.name };
+    return {
+      id,
+      project: ref.project,
+      branch: ref.worktree.branch ?? path.basename(ref.worktree.path),
+      agent: this.agentFor(ref.worktree.path).name,
+    };
   }
 
-  /** The Claude transcript to show in the chat view, or null before the first conversation. */
-  async transcriptFor(id: string): Promise<string | null> {
+  /** The agent's transcript for the chat view and how to read it; no file before the first conversation. */
+  async transcriptFor(id: string): Promise<{ file: string | null; parse: (line: string) => ChatItem[] }> {
     const ref = await this.find(id);
-    return findTranscript(ref.worktree.path, this.statuses.get(id).transcriptPath);
+    const transcript = this.agentFor(ref.worktree.path).transcript;
+    if (!transcript) return { file: null, parse: () => [] };
+    return { file: transcript.find(ref.worktree.path, this.statuses.get(id).transcriptPath), parse: transcript.parse };
   }
 
   /** Where a session's server (or setup) output is logged; the name must be one it has. */
@@ -305,8 +374,9 @@ export class SessionManager {
     return this.dev.logFile(id, name);
   }
 
+  /** End the agent, dev servers and setup of a session. */
   async stopSession(id: string): Promise<void> {
-    if (await this.tmux.hasSession(id)) await this.tmux.killSession(id);
+    await this.host.killSession(id);
     this.statuses.reset(id);
     this.invalidate();
   }
@@ -322,12 +392,16 @@ export class SessionManager {
     this.invalidate();
   }
 
-  private target(id: string, window = CLAUDE_WINDOW): string {
-    return `=${id}:${window}`;
+  private agentTerm(id: string): TermRef {
+    return { session: id, name: AGENT_TERMINAL };
+  }
+
+  private async agentRunning(id: string): Promise<boolean> {
+    return (await this.host.list()).some((t) => t.session === id && t.name === AGENT_TERMINAL && t.alive);
   }
 
   private async requireRunning(id: string): Promise<void> {
-    if (!(await this.tmux.hasSession(id))) throw new HttpError(409, 'Session is not running');
+    if (!(await this.agentRunning(id))) throw new HttpError(409, 'Session is not running');
   }
 
   async sendKeys(id: string, keys: string[]): Promise<void> {
@@ -335,24 +409,26 @@ export class SessionManager {
       throw new HttpError(400, 'Unsupported keys');
     }
     await this.requireRunning(id);
-    await this.tmux.sendKeys(this.target(id), keys);
+    await this.host.keys(this.agentTerm(id), keys);
   }
 
-  /** Paste text into Claude's input box, optionally pressing Enter to submit it. */
+  /** Paste text into the agent's input box, optionally pressing Enter to submit it. */
   async sendText(id: string, text: string, submit: boolean): Promise<void> {
     if (typeof text !== 'string' || text.length === 0) throw new HttpError(400, 'Text is required');
     await this.requireRunning(id);
-    await this.tmux.paste(this.target(id), text);
+    await this.host.paste(this.agentTerm(id), text);
     if (submit) {
-      // Give Claude Code a moment to finish handling the paste before Enter arrives.
+      // Give the agent a moment to finish handling the paste before Enter arrives.
       await new Promise((r) => setTimeout(r, 80));
-      await this.tmux.sendKeys(this.target(id), ['Enter']);
+      await this.host.keys(this.agentTerm(id), ['Enter']);
     }
   }
 
   async visiblePrompt(id: string): Promise<VisiblePrompt | null> {
+    const ref = await this.find(id);
+    const parse = this.agentFor(ref.worktree.path).parsePrompt;
     await this.requireRunning(id);
-    return parseVisiblePrompt(await this.tmux.capture(this.target(id)));
+    return parse ? parse(await this.host.screen(this.agentTerm(id))) : null;
   }
 
   /**
@@ -367,6 +443,6 @@ export class SessionManager {
     if (target === -1) throw new HttpError(400, `No option ${key}`);
     const delta = target - current;
     const moves = Array<string>(Math.abs(delta)).fill(delta > 0 ? 'Down' : 'Up');
-    await this.tmux.sendKeys(this.target(id), [...moves, 'Enter']);
+    await this.host.keys(this.agentTerm(id), [...moves, 'Enter']);
   }
 }

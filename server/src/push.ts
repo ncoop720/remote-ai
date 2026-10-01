@@ -3,7 +3,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import webpush, { type PushSubscription } from 'web-push';
 import { HttpError } from './errors.js';
-import { summarizeToolInput } from './transcript.js';
 import type { SessionStatus } from '../../shared/types.js';
 
 export interface Notice {
@@ -18,6 +17,8 @@ export interface SessionLabel {
   id: string;
   project: string;
   branch: string;
+  /** The agent's display name: "Claude Code". */
+  agent: string;
 }
 
 function oneLine(text: string | undefined, max = 180): string {
@@ -25,16 +26,16 @@ function oneLine(text: string | undefined, max = 180): string {
   return s.length > max ? `${s.slice(0, max - 1)}…` : s;
 }
 
-/** What to tell your phone about a status change, if anything: Claude needs you, or finished a turn. */
+/** What to tell your phone about a status change, if anything: the agent needs you, or finished a turn. */
 export function noticeFor(label: SessionLabel, prev: SessionStatus, next: SessionStatus): Notice | null {
   const where = `${label.project} / ${label.branch}`;
   const url = `/#/s/${encodeURIComponent(label.id)}`;
   if (next.state === 'needs_input' && prev.state !== 'needs_input') {
-    const tool = next.tool ? `${next.tool.name}: ${summarizeToolInput(next.tool.name, next.tool.input)}` : '';
-    return { title: `${where} needs you`, body: oneLine(tool || next.message || 'Claude is waiting for your answer'), tag: label.id, url };
+    const tool = next.tool ? [next.tool.name, next.tool.summary].filter(Boolean).join(': ') : '';
+    return { title: `${where} needs you`, body: oneLine(tool || next.message || `${label.agent} is waiting for your answer`), tag: label.id, url };
   }
   if (next.state === 'idle' && prev.state === 'working') {
-    return { title: `${where} finished`, body: oneLine(next.lastMessage) || 'Claude finished its turn', tag: label.id, url };
+    return { title: `${where} finished`, body: oneLine(next.lastMessage) || `${label.agent} finished its turn`, tag: label.id, url };
   }
   return null;
 }

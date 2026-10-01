@@ -2,6 +2,13 @@ import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
 import { run } from './exec.js';
+import type { UpdateResult, VersionInfo } from '../../shared/types.js';
+
+/** Where /api/version and /api/update get their answers: git for a checkout, electron-updater in the desktop app. */
+export interface UpdateProvider {
+  info(check: boolean): Promise<VersionInfo>;
+  update(): Promise<UpdateResult>;
+}
 
 /** The checkout this server runs from: the nearest folder up with remote-ai's package.json. */
 export function installRoot(start: string): string | null {
@@ -16,17 +23,7 @@ export function installRoot(start: string): string | null {
   }
 }
 
-export interface VersionInfo {
-  commit: string;
-  branch: string;
-  /** Commits on the upstream branch not yet pulled; null if there is no upstream or fetch failed. */
-  behind: number | null;
-  dirty: boolean;
-  /** Running under systemd, which restarts the server after an update that needs it. */
-  managed: boolean;
-}
-
-export async function versionInfo(root: string, fetch: boolean): Promise<VersionInfo> {
+export async function versionInfo(root: string, fetch: boolean): Promise<Extract<VersionInfo, { kind: 'git' }>> {
   const git = (...args: string[]) => run('git', ['-C', root, ...args]).then((s) => s.trim());
   let behind: number | null = null;
   try {
@@ -36,6 +33,7 @@ export async function versionInfo(root: string, fetch: boolean): Promise<Version
     behind = null;
   }
   return {
+    kind: 'git',
     commit: await git('rev-parse', '--short', 'HEAD'),
     branch: await git('rev-parse', '--abbrev-ref', 'HEAD'),
     behind,
@@ -60,17 +58,8 @@ function exec(cmd: string, args: string[], cwd: string, log: string[]): Promise<
   });
 }
 
-export interface UpdateResult {
-  ok: boolean;
-  from: string;
-  to: string;
-  /** Server code changed, so the process must restart to use it (web changes apply on reload). */
-  restartNeeded: boolean;
-  log: string[];
-}
-
 /** Fast-forward to upstream, reinstall if dependencies changed, and rebuild. */
-export async function update(root: string): Promise<UpdateResult> {
+export async function update(root: string): Promise<Omit<UpdateResult, 'restarting'>> {
   const log: string[] = [];
   const head = async () => (await run('git', ['-C', root, 'rev-parse', 'HEAD'])).trim();
   const from = await head();
@@ -89,4 +78,18 @@ export async function update(root: string): Promise<UpdateResult> {
     log.push((err as Error).message);
     return { ok: false, from, to: await head(), restartNeeded: false, log: log.slice(-60) };
   }
+}
+
+/** Updates for a git checkout: pull and rebuild, then restart if running under systemd. */
+export function gitUpdates(root: string): UpdateProvider {
+  return {
+    info: (check) => versionInfo(root, check),
+    async update() {
+      const result = await update(root);
+      // Under systemd (Restart=always) exiting is a restart. Sessions live in the session host, so they carry on.
+      const restarting = result.ok && result.restartNeeded && Boolean(process.env.INVOCATION_ID);
+      if (restarting) setTimeout(() => process.exit(0), 500);
+      return { ...result, restarting };
+    },
+  };
 }

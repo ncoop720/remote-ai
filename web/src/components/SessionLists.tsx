@@ -47,6 +47,9 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
         ))}
         {projects.length === 0 && <EmptyProjects />}
       </div>
+      <a className="sidebar-link" href={routes.setup()}>
+        Projects &amp; setup
+      </a>
       <UpdatePanel />
     </nav>
   );
@@ -99,6 +102,9 @@ export function MobileSessionList({ projects }: { projects: ProjectInfo[] }) {
           </section>
         );
       })}
+      <a className="sidebar-link" href={routes.setup()}>
+        Projects &amp; setup
+      </a>
       <UpdatePanel />
       <a className="fab" href={routes.newSession(filter ?? undefined)}>
         <Plus size={18} /> New session
@@ -126,8 +132,7 @@ function SessionRow({ session: s }: { session: SessionInfo }) {
 function EmptyProjects() {
   return (
     <p className="empty">
-      No projects yet. Clone a repository into the projects directory on the server (default <code>~/projects</code>) and
-      it will show up here.
+      No projects yet. <a href={routes.setup()}>Add a repository</a> to start sessions in it.
     </p>
   );
 }
