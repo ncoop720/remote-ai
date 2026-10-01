@@ -4,7 +4,7 @@ import * as git from './git.js';
 import type { Worktree } from './git.js';
 import type { AgentAdapter, AgentRegistry } from './agents/index.js';
 import type { DevManager } from './dev.js';
-import { loadProjectConfig } from './devconfig.js';
+import { loadProjectConfig, setupRequest } from './devconfig.js';
 import { HttpError } from './errors.js';
 import { expandHome, type Config } from './config.js';
 import { sessionId, slug } from './ids.js';
@@ -367,6 +367,26 @@ export class SessionManager {
         throw new HttpError(400, `Unknown action ${String(action)}`);
     }
     this.invalidate();
+  }
+
+  /**
+   * Set up with Claude: ask the session's agent to write .remote-ai.json. A running agent gets the
+   * request as a message; otherwise the agent starts with it.
+   */
+  async configureWithAgent(id: string): Promise<{ started: boolean }> {
+    const ref = await this.find(id);
+    const request = setupRequest(loadProjectConfig(ref.worktree.path, ref.projectPath), process.platform);
+    if (await this.agentRunning(id)) {
+      // Enter would pick whatever a menu (a permission prompt, the folder-trust question) has highlighted.
+      if (this.statuses.get(id).state === 'needs_input' || (await this.visiblePrompt(id))) {
+        throw new HttpError(409, 'The agent is asking something; answer it first');
+      }
+      await this.sendText(id, request, true);
+      return { started: false };
+    }
+    await this.startAgent(id, ref.worktree.path, ref.projectPath, { prompt: request });
+    this.invalidate();
+    return { started: true };
   }
 
   /** Project, branch and agent for notifications; falls back to the id if the worktree is gone. */

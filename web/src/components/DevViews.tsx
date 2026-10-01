@@ -28,17 +28,65 @@ function useLogStream(sessionId: string, name: string | null): string {
   return text;
 }
 
+const agentLabel = (session: SessionInfo) => (session.agent === 'claude' ? 'Claude' : 'the agent');
+
+/** Ask the session's agent to write .remote-ai.json; it starts if it wasn't running. */
+function SetUpButton({ session, primary, onDone }: { session: SessionInfo; primary?: boolean; onDone: (message: string) => void }) {
+  const [busy, setBusy] = useState(false);
+  const click = async () => {
+    setBusy(true);
+    try {
+      const { started } = await api.configureDev(session.id);
+      onDone(
+        `${started ? 'Started' : 'Asked'} ${agentLabel(session)} to write .remote-ai.json; follow along in the chat. The servers here update when it's done.`,
+      );
+    } catch (err) {
+      onDone(errorMessage(err));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <button type="button" className={primary ? 'btn btn-primary' : 'link-btn'} disabled={busy} onClick={() => void click()}>
+      {busy ? 'Asking…' : `Set up with ${agentLabel(session)}`}
+    </button>
+  );
+}
+
+/** Where the servers below come from, and a way to have the agent set them up properly. */
+function ConfigLine({ session }: { session: SessionInfo }) {
+  const [message, setMessage] = useState<string | null>(null);
+  const { dev } = session;
+  const from = dev.source === 'file' ? 'From .remote-ai.json' : `Detected: ${dev.detected ?? 'a guess from the repo'}`;
+  return (
+    <div className="config-line">
+      <span className="muted">{from}</span>
+      <SetUpButton session={session} onDone={setMessage} />
+      {message && <p className="config-message">{message}</p>}
+    </div>
+  );
+}
+
 function ConfigHelp({ session }: { session: SessionInfo }) {
+  const [message, setMessage] = useState<string | null>(null);
   return (
     <div className="dev-help">
       {session.dev.error ? (
         <p className="error">{session.dev.error}</p>
       ) : (
-        <p>No dev servers are set up for {session.project}.</p>
+        <p>No dev servers found for {session.project}.</p>
       )}
       <p className="muted">
-        Add a <code>.remote-ai.json</code> to the repo (or just to the main checkout). Each server runs in its own terminal
-        and gets <code>$PORT</code>, plus <code>$PORT_&lt;NAME&gt;</code> for every server:
+        {agentLabel(session) === 'Claude' ? 'Claude' : 'The agent'} can read the repo and write a <code>.remote-ai.json</code> that
+        says how to install and run it.
+      </p>
+      <div className="row">
+        <SetUpButton session={session} primary onDone={setMessage} />
+      </div>
+      {message && <p className="config-message">{message}</p>}
+      <p className="muted">
+        Or write it yourself (in the repo, or just in the main checkout). Each server runs in its own terminal and gets{' '}
+        <code>$PORT</code>, plus <code>$PORT_&lt;NAME&gt;</code> for every server:
       </p>
       <pre>{`{
   "setup": ["npm ci"],
@@ -123,6 +171,7 @@ export function LogsView({ session }: { session: SessionInfo }) {
   const stoppedCount = dev.servers.filter((s) => s.state === 'stopped').length;
   return (
     <section className="logs" aria-label="Dev server logs">
+      <ConfigLine session={session} />
       <div className="logs-toolbar">
         <div className="chips" role="group" aria-label="Log">
           {dev.servers.map((s) => (

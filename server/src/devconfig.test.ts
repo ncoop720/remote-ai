@@ -3,7 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { defaultConfig, loadProjectConfig, parseProjectConfig, portVar } from './devconfig.js';
+import { loadProjectConfig, parseProjectConfig, portVar, setupRequest } from './devconfig.js';
 
 test('parses servers with default cwd', () => {
   const c = parseProjectConfig(
@@ -34,15 +34,16 @@ test('reports mistakes instead of throwing', () => {
   assert.match(error({ setup: 'npm ci' }), /list of commands/);
 });
 
-test('guesses from package.json when there is no config file', () => {
+test('without a config file, the repo is guessed at', () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-cfg-'));
-  assert.equal(defaultConfig(dir).source, 'none');
+  assert.equal(loadProjectConfig(dir, dir).source, 'none');
   fs.writeFileSync(path.join(dir, 'package.json'), JSON.stringify({ scripts: { dev: 'vite' } }));
   fs.writeFileSync(path.join(dir, 'package-lock.json'), '{}');
-  assert.deepEqual(defaultConfig(dir), {
-    source: 'default',
+  assert.deepEqual(loadProjectConfig(dir, dir), {
+    source: 'detected',
+    detected: 'Vite with npm',
     setup: ['npm ci'],
-    servers: [{ name: 'dev', command: 'npm run dev', cwd: '' }],
+    servers: [{ name: 'dev', command: 'npm run dev -- --port $PORT --strictPort', cwd: '' }],
   });
   fs.rmSync(dir, { recursive: true, force: true });
 });
@@ -62,4 +63,17 @@ test("a worktree's own config wins over the main checkout's", () => {
 
 test('portVar makes an environment variable name', () => {
   assert.equal(portVar('api-v2'), 'PORT_API_V2');
+});
+
+test('the request to the agent explains the format and includes the guess', () => {
+  const guessed = setupRequest(
+    { source: 'detected', detected: 'Vite with pnpm', setup: ['pnpm install'], servers: [{ name: 'dev', command: 'pnpm run dev', cwd: '' }] },
+    'win32',
+  );
+  assert.match(guessed, /^Set up this repository for remote-ai: write \.remote-ai\.json/);
+  assert.match(guessed, /\$PORT_<NAME>/);
+  assert.match(guessed, /on Windows; \$PORT and \$PORT_<NAME> work on every OS/);
+  assert.match(guessed, /\(Vite with pnpm\):\n\{\n {2}"setup": \[\n {4}"pnpm install"/);
+  assert.match(setupRequest({ source: 'none', setup: [], servers: [] }, 'linux'), /found nothing it recognizes/);
+  assert.match(setupRequest({ source: 'file', error: 'bad JSON', setup: [], servers: [] }, 'darwin'), /with a problem: bad JSON/);
 });

@@ -31,6 +31,8 @@ export function useProjects() {
       if (event.type === 'sessions') {
         void refresh();
       } else if (event.type === 'status') {
+        // A finished turn may have changed files the dashboard shows (dev config, diffs).
+        if (event.status.state === 'idle') void refresh();
         setProjects((ps) =>
           ps?.map((p) => ({
             ...p,

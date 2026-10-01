@@ -83,6 +83,7 @@ export class DevManager {
     const ports = this.ports(target.path, config, false);
     return {
       source: config.source,
+      detected: config.detected,
       error: config.error,
       setup: config.setup.length > 0 ? this.setupState(target, byName.get(SETUP_TERMINAL)) : 'none',
       servers: config.servers.map((s) => ({

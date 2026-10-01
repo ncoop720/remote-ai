@@ -105,7 +105,8 @@ Describe a project's dev servers in `.remote-ai.json` at the repo root:
 - **setup** runs once in every new worktree (each command from the worktree root), in a `setup` terminal; its exit code says whether it worked. Rerun it from the Logs panel.
 - **servers** each run in their own terminal (`dev-<name>`), through your shell (`cmd.exe` on Windows, where `$PORT`-style variables are filled in for you). A server gets `$PORT`, and every command gets `$PORT_<NAME>` for all servers, so a frontend can find its backend. Ports come from the session's block (3100–3109 for the first worktree, 3110–3119 for the next, …).
 - The file can be committed, or left uncommitted in the main checkout: worktrees without their own copy use the main checkout's.
-- Without a config file, a repo whose `package.json` has a `dev` script gets `npm run dev` (and `npm ci` as setup).
+- Without a config file, remote-ai guesses from the repo: a `Procfile.dev`; a Node app's `dev` script with its package manager (npm, pnpm, yarn or bun), including apps in `server/` and `client/`-style folders and workspace monorepos, passing `--port $PORT` to Vite, Astro and Angular, which ignore `$PORT`; Django, FastAPI or Flask (through uv, Poetry or Pipenv when the repo uses one); Rails; Go; Rust; and as a last resort a `Procfile` or `docker compose up`. The Logs panel says what it detected.
+- **Set up with Claude** (in the Logs panel) asks the session's agent to read the repo and write `.remote-ai.json`, starting the agent if it isn't running. It gets the format, the `$PORT` rules and the guess above to correct, and is told not to start servers itself.
 
 Output goes to `~/.remote-ai/logs/<session>/<name>.log` and streams to the Logs panel, where you can pick lines and paste them into Claude's prompt. Claude is told about the servers, their ports and log files (via `--append-system-prompt`), and how to restart them, so it reads the logs instead of starting its own copies.
 
@@ -169,4 +170,4 @@ v2:
 - [x] Desktop app: installers, tray, start at login, updates, first-run checklist
 - [x] Pairing: QR code for phones, then built-in Tailscale with https
 - [x] Preview through the app's secure address
-- [ ] Dev-server detection, and Set up with Claude
+- [x] Dev-server detection, and Set up with Claude

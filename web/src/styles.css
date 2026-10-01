@@ -1763,3 +1763,24 @@ button:disabled {
     align-items: center;
   }
 }
+
+/* ---------- dev config ---------- */
+
+.config-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  padding: 2px 2px 0;
+  font-size: 12px;
+}
+.config-message {
+  flex-basis: 100%;
+  margin: 2px 0 0;
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.4;
+}
+.dev-help .row {
+  margin: 4px 0;
+}

@@ -46,8 +46,10 @@ export interface DevServerInfo {
 export type SetupState = 'none' | 'pending' | 'running' | 'done' | 'failed';
 
 export interface DevInfo {
-  /** Where the dev config came from: .remote-ai.json, a guess from package.json, or nowhere. */
-  source: 'file' | 'default' | 'none';
+  /** Where the dev config came from: .remote-ai.json, a guess from the repo's files, or nowhere. */
+  source: 'file' | 'detected' | 'none';
+  /** What the guess is based on, e.g. "Vite with pnpm". */
+  detected?: string;
   error?: string;
   setup: SetupState;
   servers: DevServerInfo[];

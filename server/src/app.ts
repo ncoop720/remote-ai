@@ -394,6 +394,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     return { ok: true };
   });
 
+  // Set up with Claude: the session's agent writes .remote-ai.json.
+  app.post<{ Params: { id: string } }>('/api/sessions/:id/dev/configure', async (req) => {
+    const result = await sessions.configureWithAgent(req.params.id);
+    hub.broadcast({ type: 'sessions' });
+    return result;
+  });
+
   const DEV_ACTIONS: readonly DevAction[] = ['start', 'stop', 'restart', 'setup'];
 
   // Also called by the agent itself (see DevManager.describeForAgent), so the server name can go in the query string.

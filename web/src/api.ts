@@ -50,6 +50,8 @@ export const api = {
   answer: (id: string, key: string) => request<void>('POST', `${session(id)}/answer`, { key }),
   dev: (id: string, action: DevAction, name?: string) =>
     request<void>('POST', `${session(id)}/dev/${action}${name ? `?name=${encodeURIComponent(name)}` : ''}`),
+  /** Set up with Claude: the agent writes .remote-ai.json; it starts if it wasn't running. */
+  configureDev: (id: string) => request<{ started: boolean }>('POST', `${session(id)}/dev/configure`),
   logsUrl: (id: string, name: string) => `${session(id)}/logs/${encodeURIComponent(name)}`,
   pushInfo: () => request<{ publicKey: string; subscriptions: number }>('GET', '/api/push'),
   pushSubscribe: (subscription: PushSubscriptionJSON) => request<{ ok: boolean }>('POST', '/api/push/subscribe', { subscription }),
