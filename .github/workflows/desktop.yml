@@ -1,5 +1,6 @@
-# Builds the desktop app on each OS. A tag like v2.0.0 publishes the installers to a draft
-# GitHub release, which the installed apps update from once it is published.
+# Builds the desktop app on each OS. A tag like v2.0.0 (matching "version" in package.json)
+# uploads the installers to a draft GitHub release; publish it on GitHub to make it available.
+# Running the workflow by hand builds the installers as downloadable artifacts only.
 name: Desktop app
 
 on:
@@ -11,7 +12,21 @@ permissions:
   contents: write
 
 jobs:
+  # One draft release for all three builds to upload into (each creating its own would race).
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 ||
+            gh release create "$GITHUB_REF_NAME" -R "$GITHUB_REPOSITORY" --draft --title "remote-ai ${GITHUB_REF_NAME#v}" --notes "Installers for macOS, Windows and Linux."
+
   build:
+    needs: release
+    if: always() && needs.release.result != 'failure'
     strategy:
       fail-fast: false
       matrix:
@@ -37,7 +52,9 @@ jobs:
           go-version-file: tailscale/go.mod
           cache-dependency-path: tailscale/go.sum
       - run: npm ci
-      - run: npm test
+      # The tests assume POSIX paths in places; one run covers them.
+      - if: runner.os == 'Linux'
+        run: npm test
       - run: node scripts/build-desktop.mjs --targets ${{ matrix.targets }}
       - run: npx electron-builder ${{ matrix.builder }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
         env:

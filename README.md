@@ -30,7 +30,7 @@ browser ──HTTP/WebSocket──► remote-ai server (Node, 127.0.0.1:8787)
 
 ## Desktop app
 
-Download the installer for your OS from the [releases](https://github.com/ncoop720/remote-ai/releases): a `.dmg` for macOS, an `.exe` for Windows, an `.AppImage` or `.deb` for Linux. On first start the app opens a checklist: it checks for git, installs Claude Code with Anthropic's official installer and runs its sign-in if needed, and asks for the repositories to add.
+Download the installer for your OS from the [releases](https://github.com/ncoop720/remote-ai/releases) (the repository is private, so this needs access to it): a `.dmg` for macOS, an `.exe` for Windows, an `.AppImage` or `.deb` for Linux. On first start the app opens a checklist: it checks for git, installs Claude Code with Anthropic's official installer and runs its sign-in if needed, and asks for the repositories to add.
 
 - The app lives in the tray (the menu bar on macOS) and starts at login; closing the window keeps it running. **Quit** leaves sessions running in the session host, and the next start picks them up again. **Stop all sessions and quit** ends them.
 - Notifications come from the app itself, so the dashboard's bell (Web Push, for phones) is hidden in its window.
@@ -39,11 +39,11 @@ Download the installer for your OS from the [releases](https://github.com/ncoop7
   - **On this Wi-Fi**: a second listener on port 8788 (`"wifiPort"` in `config.json`). It is plain http, so use it on networks you trust; phones can't get notifications over it.
   - **Anywhere, with Tailscale**: the app joins your tailnet as its own device (built in with [tsnet](https://tailscale.com/kb/1244/tsnet), so the Tailscale app isn't needed on the computer) and serves the dashboard at `https://remote-ai-<computer>.<tailnet>.ts.net`. Sign the computer in once from the Connect page. Your own devices, signed in to Tailscale as you, get in without a code; other people's on the same tailnet need one. HTTPS (and so notifications and installing the app) needs MagicDNS and HTTPS Certificates turned on in the tailnet's [DNS settings](https://login.tailscale.com/admin/dns).
 - On iPhone, add the page to the Home Screen after pairing (Share, then Add to Home Screen) and open it from there to turn on notifications. The Home Screen app signs itself in, even though iOS keeps its cookies apart from Safari's.
-- Updates download from GitHub releases in the background; **Restart to update** in the tray or the sidebar installs them. Sessions keep running through an update, because the session host runs from its own copy outside the app (`~/.remote-ai/host-runtime/`), which only changes when the host itself does.
+- Updates: while the repository is private the app can't fetch releases by itself, so install a new version over the old one. Sessions keep running through an update, because the session host runs from its own copy outside the app (`~/.remote-ai/host-runtime/`), which only changes when the host itself does. (The app has an updater for GitHub releases; it starts working if the repository is made public.)
 - Data, logs and settings live in `~/.remote-ai`, as with the server. The window is served on `127.0.0.1:8787`; set `"port"` in `~/.remote-ai/config.json` to change it.
-- The builds aren't code-signed yet, so macOS and Windows warn the first time you open the app, and macOS won't install updates by itself. Only the AppImage updates itself on Linux.
+- The builds aren't code-signed yet, so macOS and Windows warn the first time you open the app.
 
-To build it yourself: `npm run desktop:start` runs it from source (with its own data in `~/.remote-ai-desktop-dev`), and `npm run desktop:dist` makes installers for this OS in `dist/release`. Building the Tailscale part (`tailscale/`, in Go) uses `go` from your PATH, or downloads a Go release into `~/.cache/remote-ai-build`. Pushing a `v*` tag builds all three on GitHub Actions (`.github/workflows/desktop.yml`) and drafts a release.
+To build it yourself: `npm run desktop:start` runs it from source (with its own data in `~/.remote-ai-desktop-dev`), and `npm run desktop:dist` makes installers for this OS in `dist/release`. Building the Tailscale part (`tailscale/`, in Go) uses `go` from your PATH, or downloads a Go release into `~/.cache/remote-ai-build`. To release, set `version` in `package.json` and push a matching tag (`v2.0.0`): GitHub Actions (`.github/workflows/desktop.yml`) builds all three and uploads them to a draft release, which you then publish on GitHub.
 
 ## Server install (Linux)
 

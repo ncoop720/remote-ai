@@ -17,7 +17,10 @@ function unsupportedReason(): string | null {
 /** electron-updater's errors are often a bare HTTP status or a long stack; say what happened. */
 function describeError(err: Error): string {
   const first = err.message.split('\n')[0]!.trim();
-  if (/^404\b|HttpError: 404/.test(first)) return 'No published release found on GitHub';
+  // A private repository answers 404 to anyone signed out, as does one with no published release.
+  if (/^404\b|HttpError: 404|Unable to find latest version/i.test(first)) {
+    return 'No release to update from: get new versions from the releases page';
+  }
   if (/ENOTFOUND|ECONNREFUSED|ETIMEDOUT|ENETUNREACH|net::ERR_/.test(first)) return "Couldn't reach GitHub to check for updates";
   if (/code signature|not signed/i.test(first)) return 'This copy is unsigned, so macOS won’t let it update itself';
   return first.length > 160 ? `${first.slice(0, 157)}…` : first;

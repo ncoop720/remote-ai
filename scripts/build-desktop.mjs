@@ -56,6 +56,11 @@ const common = {
   external: ['bufferutil', 'utf-8-validate'],
 };
 
+/** Windows' own bsdtar, which unpacks zip files; elsewhere the tar on PATH. */
+function windowsTar() {
+  return process.platform === 'win32' ? path.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+}
+
 function step(msg) {
   console.log(`\n▸ ${msg}`);
 }
@@ -179,8 +184,9 @@ async function nodeBinary(version, target) {
   const archivePath = path.join(cacheDir, archive);
   fs.writeFileSync(archivePath, data);
   const member = isWin ? `${base}/node.exe` : `${base}/bin/node`;
-  // bsdtar (macOS, Windows) reads zip files too.
-  execFileSync('tar', ['-xf', archivePath, '-C', cacheDir, member], { stdio: 'inherit' });
+  // bsdtar (macOS, Windows) reads zip files too. On Windows, name it: Git's GNU tar, often first
+  // on PATH there, can't.
+  execFileSync(windowsTar(), ['-xf', archivePath, '-C', cacheDir, member], { stdio: 'inherit' });
   if (!isWin) fs.renameSync(path.join(cacheDir, member), binary);
   fs.rmSync(archivePath);
   return binary;
@@ -285,7 +291,7 @@ async function goToolchain() {
   fs.mkdirSync(dest, { recursive: true });
   const archive = path.join(goDir, file.filename);
   fs.writeFileSync(archive, data);
-  execFileSync('tar', ['-xf', archive, '-C', dest], { stdio: 'inherit' });
+  execFileSync(windowsTar(), ['-xf', archive, '-C', dest], { stdio: 'inherit' });
   fs.rmSync(archive);
   return { go: binOf(release.version), env };
 }
