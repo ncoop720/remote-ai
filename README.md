@@ -8,6 +8,8 @@ A dashboard for running Claude Code on your computer and driving it from a deskt
 
 Everything runs on your machine. There is no relay and no dependency on Claude's Remote Control.
 
+**[How to use it →](docs/guide.md)** Install, first run, sessions, dev servers and previews, connecting your phone, settings and troubleshooting.
+
 ## How it works
 
 ```
