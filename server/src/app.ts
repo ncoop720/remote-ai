@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import net from 'node:net';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -329,8 +330,10 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
 
   app.post<{ Params: { id: string } }>('/api/agents/:id/signin', async (req) => agentTask(req.params.id, 'signin'));
 
-  app.post<{ Body: { path?: string } }>('/api/projects', async (req) => {
-    const name = await sessions.addProject(String(req.body?.path ?? ''));
+  // Add a project: clone it from a URL, or pick a folder that is already on this computer.
+  app.post<{ Body: { path?: string; url?: string; name?: string } }>('/api/projects', async (req) => {
+    const body = req.body ?? {};
+    const name = body.url !== undefined ? await sessions.cloneProject(body.url, body.name) : await sessions.addProject(String(body.path ?? ''));
     hub.broadcast({ type: 'sessions' });
     return { name };
   });
@@ -414,6 +417,8 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       return { ok: true };
     },
   );
+
+  app.get<{ Params: { id: string } }>('/api/sessions/:id/diff', async (req) => sessions.diff(req.params.id));
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id/chat', async (req, reply) => {
     const { file, parse } = await sessions.transcriptFor(req.params.id);
@@ -555,7 +560,23 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     app.log.error({ err }, 'could not reach the session host');
   }
 
-  await app.listen({ host: cfg.host, port: cfg.port });
+  let loopback6: net.Server | null = null;
+  if (cfg.host === 'localhost') {
+    // Distros often map "localhost" to 127.0.0.1 only, but clients such as PowerShell or WSL's
+    // mirrored networking try ::1 first and stall. Listen on 127.0.0.1 and forward ::1 to it.
+    await app.listen({ host: '127.0.0.1', port: cfg.port });
+    loopback6 = net
+      .createServer((client) => {
+        const upstream = net.connect(cfg.port, '127.0.0.1');
+        client.pipe(upstream).pipe(client);
+        client.on('error', () => upstream.destroy());
+        upstream.on('error', () => client.destroy());
+      })
+      .on('error', (err) => app.log.warn({ err }, 'not listening on ::1'))
+      .listen(cfg.port, '::1');
+  } else {
+    await app.listen({ host: cfg.host, port: cfg.port });
+  }
   const address = app.server.address();
   const port = typeof address === 'object' && address ? address.port : cfg.port;
   app.log.info(`projects: ${cfg.projectsDir ?? '(added only)'}  worktrees: ${cfg.worktreesDir}  data: ${cfg.dataDir}`);
@@ -564,7 +585,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   await refreshPreviews();
 
   return {
-    url: `http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${port}`,
+    url: `http://${['0.0.0.0', '::', 'localhost'].includes(cfg.host) ? '127.0.0.1' : cfg.host}:${port}`,
     host,
     sessions,
     statuses,
@@ -575,6 +596,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
       clearTimeout(previewTimer);
       await remote.close();
       host.close();
+      loopback6?.close();
       await app.close();
       logStream?.end();
     },

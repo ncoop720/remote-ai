@@ -4,6 +4,8 @@ import { navigate, routes } from '../hooks';
 import type { PermissionMode, SessionInfo } from '../../../shared/types';
 import { ChatView } from './ChatView';
 import { DevPanel, LogsView, PreviewView } from './DevViews';
+import { DiffView } from './DiffView';
+import { changeSummary } from '../status';
 import { ChevronLeft, Play, Stop, Trash } from './icons';
 import { Composer, MobileControls } from './MobileControls';
 import { PromptCard } from './PromptCard';
@@ -101,6 +103,8 @@ export function SessionView({ session, isDesktop, onChanged }: {
   const [leftView, setLeftView] = useState<'terminal' | 'chat'>('terminal');
   const working = session.status.state === 'working';
   const [devToggled, setDevToggled] = useState<boolean | null>(null);
+  const [showDiff, setShowDiff] = useState(false);
+  const changes = changeSummary(session);
   const showDev = devToggled ?? hasDevContent(session);
   const runningServers = session.dev.servers.filter((s) => s.state === 'running').length;
 
@@ -135,17 +139,34 @@ export function SessionView({ session, isDesktop, onChanged }: {
             {isDesktop && <span className="muted">{session.project} /</span>}
             <span className="mono">{session.branch ?? 'detached'}</span>
             <StatusPill state={session.status.state} />
+            {isDesktop && session.title && <span className="session-topic">{session.title}</span>}
           </div>
-          {isDesktop ? <Meta session={session} /> : <div className="session-meta">{session.project}</div>}
+          {isDesktop ? (
+            <Meta session={session} />
+          ) : (
+            <div className="session-meta session-meta-sans">{session.title ? `${session.project} · ${session.title}` : session.project}</div>
+          )}
         </div>
         <div className="session-actions">
+          {changes && (
+            <button type="button" className="btn changes-btn" onClick={() => setShowDiff(true)} aria-label={`Review changes (${changes})`}>
+              {isDesktop && 'Changes '}
+              <span className="mono">{changes}</span>
+            </button>
+          )}
           {isDesktop && session.running && (
             <button type="button" className="btn" aria-pressed={showDev} onClick={() => setDevToggled(!showDev)}>
               {showDev ? 'Hide preview & logs' : 'Preview & logs'}
             </button>
           )}
           {session.running && (
-            <ConfirmButton label="Stop" confirmLabel="Stop session?" icon={<Stop size={14} />} onConfirm={() => void act(() => api.stop(session.id))} />
+            <ConfirmButton
+              label={isDesktop ? 'End session' : 'End'}
+              ariaLabel="End session (stops Claude and the dev servers)"
+              confirmLabel="End session?"
+              icon={<Stop size={14} />}
+              onConfirm={() => void act(() => api.stop(session.id))}
+            />
           )}
           {!session.isMain && (
             <ConfirmButton
@@ -158,6 +179,8 @@ export function SessionView({ session, isDesktop, onChanged }: {
           )}
         </div>
       </header>
+
+      {showDiff && <DiffView session={session} onClose={() => setShowDiff(false)} />}
 
       {error && (
         <div className="notice error">

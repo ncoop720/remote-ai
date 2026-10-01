@@ -99,6 +99,36 @@ export async function removeWorktree(repo: string, path: string, force: boolean)
   await run('git', args);
 }
 
+const REPO_URL = /^(https:\/\/[^\s]+|ssh:\/\/[^\s]+|[\w.-]+@[\w.-]+:[^\s]+)$/;
+const PROJECT_NAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/;
+
+/** "https://github.com/me/my-app.git" → "my-app". */
+export function projectNameFromUrl(url: string): string {
+  return (
+    url
+      .replace(/[?#].*$/, '')
+      .replace(/\/+$/, '')
+      .split(/[/:]/)
+      .pop()
+      ?.replace(/\.git$/, '') ?? ''
+  );
+}
+
+export function validateClone(url: string, name: string): string | null {
+  if (!REPO_URL.test(url)) return 'Use an https:// or SSH (git@host:owner/repo) URL';
+  if (!PROJECT_NAME.test(name)) return 'Project names use letters, digits, dots, dashes and underscores';
+  return null;
+}
+
+/** Clone without ever prompting: a missing credential fails fast instead of hanging the server. */
+export async function cloneRepo(url: string, dest: string): Promise<void> {
+  await run('git', ['clone', '--quiet', '--', url, dest], {
+    env: { GIT_TERMINAL_PROMPT: '0', GIT_SSH_COMMAND: 'ssh -o BatchMode=yes' },
+    timeoutMs: 10 * 60_000,
+    label: 'git clone',
+  });
+}
+
 /** Number of changed or untracked files. */
 export async function dirtyCount(path: string): Promise<number> {
   const out = await run('git', ['-C', path, 'status', '--porcelain']);

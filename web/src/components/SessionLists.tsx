@@ -37,6 +37,7 @@ export function Sidebar({ projects, selectedId }: { projects: ProjectInfo[]; sel
                 href={routes.session(s.id)}
                 className={`sidebar-row${s.id === selectedId ? ' selected' : ''}`}
                 aria-current={s.id === selectedId ? 'page' : undefined}
+                title={s.title ?? undefined}
               >
                 <StatusDot state={s.status.state} />
                 <span className="mono grow ellipsis">{s.branch ?? 'detached'}</span>
@@ -137,7 +138,8 @@ function SessionRow({ session: s }: { session: SessionInfo }) {
 function EmptyProjects() {
   return (
     <p className="empty">
-      No projects yet. <a href={routes.setup()}>Add a repository</a> to start sessions in it.
+      No projects yet. <a href={routes.setup()}>Add a repository</a> from this computer, or clone one with{' '}
+      <a href={routes.newSession()}>New session → Clone a repo</a>.
     </p>
   );
 }

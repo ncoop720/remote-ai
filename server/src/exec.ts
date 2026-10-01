@@ -14,13 +14,19 @@ export class CommandError extends Error {
 export function run(
   cmd: string,
   args: string[],
-  opts: { cwd?: string; input?: string; label?: string } = {},
+  opts: { cwd?: string; input?: string; label?: string; env?: Record<string, string>; timeoutMs?: number } = {},
 ): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = execFile(
       cmd,
       args,
-      { cwd: opts.cwd, maxBuffer: 16 * 1024 * 1024, encoding: 'utf8' },
+      {
+        cwd: opts.cwd,
+        maxBuffer: 16 * 1024 * 1024,
+        encoding: 'utf8',
+        env: opts.env ? { ...process.env, ...opts.env } : undefined,
+        timeout: opts.timeoutMs,
+      },
       (err, stdout, stderr) => {
         if (err) {
           if (err.code === 'ENOENT') {

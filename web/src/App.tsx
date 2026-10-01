@@ -78,6 +78,12 @@ function Dashboard({ justPaired, local }: { justPaired: boolean; local: boolean 
   const route = useRoute();
   const isDesktop = useMediaQuery('(min-width: 900px)');
 
+  // "(2) remote-ai" in the tab title when sessions are waiting on you.
+  const waiting = projects?.flatMap((p) => p.sessions).filter((s) => s.status.state === 'needs_input').length ?? 0;
+  useEffect(() => {
+    document.title = waiting ? `(${waiting}) remote-ai` : 'remote-ai';
+  }, [waiting]);
+
   if (!projects) {
     return <div className="splash">{error ? `Can't reach the server: ${error}` : 'Loading…'}</div>;
   }

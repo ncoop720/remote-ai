@@ -69,7 +69,7 @@ export function Composer({ sessionId, working, submitOnEnter }: { sessionId: str
       <form className="composer" onSubmit={(e) => void submit(e)}>
         {working && (
           <button type="button" className="interrupt" onClick={() => void api.keys(sessionId, ['Escape'])} aria-label="Interrupt Claude (Esc)">
-            Stop
+            Interrupt
           </button>
         )}
         <textarea

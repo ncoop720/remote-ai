@@ -24,14 +24,23 @@ export function groupOf(s: SessionInfo): StatusGroup {
   }
 }
 
-/** One line under the branch name: what Claude is doing or last said. */
+/** One line under the branch name: what Claude needs, or what the conversation is about. */
 export function subtitle(s: SessionInfo): string {
   const st = s.status;
   if (st.state === 'needs_input') return st.message ?? 'Waiting for your answer';
-  if (st.state === 'working') return 'Working…';
+  if (st.state === 'working') return s.title ? `Working · ${s.title}` : 'Working…';
+  if (s.title) return s.title;
   if (st.state === 'stopped') return s.isMain ? 'Main checkout' : 'Worktree, not running';
   if (st.lastMessage) return st.lastMessage.replace(/\s+/g, ' ');
   return STATE_LABEL[st.state];
+}
+
+/** "+12 −3", or the number of new files when only untracked files changed. */
+export function changeSummary(s: SessionInfo): string | null {
+  const { additions, deletions } = s.changes;
+  if (additions || deletions) return `+${additions} −${deletions}`;
+  if (s.dirty) return `${s.dirty} new`;
+  return null;
 }
 
 /** A one-line summary of a tool call, for the approval card. */

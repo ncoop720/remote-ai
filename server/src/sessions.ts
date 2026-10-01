@@ -1,4 +1,5 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import * as git from './git.js';
 import type { Worktree } from './git.js';
@@ -12,12 +13,14 @@ import type { HostClient } from './hostclient.js';
 import type { TermInfo, TermRef } from './host/protocol.js';
 import { listeningPorts, type ListeningProcess } from './ports.js';
 import type { SessionLabel } from './push.js';
+import { diffBase, diffStat, worktreeDiff } from './diff.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
 import type {
   ChatItem,
   CreateSessionRequest,
   DevAction,
+  DiffResult,
   ListeningPort,
   PermissionMode,
   ProjectInfo,
@@ -181,9 +184,10 @@ export class SessionManager {
             index.push({ id, project: p.name, projectPath: p.path, worktree: wt, isMain });
 
             const base = this.state.baseFor(wt.path) ?? (isMain ? null : defaultBranch);
-            const [dirty, ahead] = await Promise.all([
+            const [dirty, ahead, changes] = await Promise.all([
               git.dirtyCount(wt.path).catch(() => 0),
               base ? git.aheadOf(wt.path, base) : Promise.resolve(null),
+              diffBase(wt.path, base).then((against) => diffStat(wt.path, against)),
             ]);
             const sessionTerms = termsBySession.get(id) ?? [];
             const isRunning = sessionTerms.some((t) => t.name === AGENT_TERMINAL && t.alive);
@@ -204,6 +208,8 @@ export class SessionManager {
               status: isRunning ? this.statuses.get(id) : { state: 'stopped', updatedAt: 0 },
               dev: this.dev.info({ id, path: wt.path }, config, sessionTerms),
               ports: sessionPorts(candidates, { path: wt.path, terminalPids: sessionTerms.filter((t) => t.alive).map((t) => t.pid) }, allPaths),
+              changes,
+              title: this.agentFor(wt.path).transcript?.title?.(this.transcriptFile(wt.path, id)) ?? null,
             };
           }),
         );
@@ -389,6 +395,50 @@ export class SessionManager {
     return { started: true };
   }
 
+  /** Everything the worktree changed since it branched, including uncommitted and untracked files. */
+  async diff(id: string): Promise<DiffResult> {
+    const ref = await this.find(id);
+    const base = this.state.baseFor(ref.worktree.path) ?? (ref.isMain ? null : (await this.mainBranch(ref)) ?? null);
+    return worktreeDiff(ref.worktree.path, base);
+  }
+
+  private async mainBranch(ref: WorktreeRef): Promise<string | null> {
+    const worktrees = await git.listWorktrees(ref.projectPath).catch(() => [] as Worktree[]);
+    return worktrees[0]?.branch ?? null;
+  }
+
+  /**
+   * Clone a repository into the projects folder (~/projects when there is none, as in the desktop
+   * app) and add it as a project.
+   */
+  async cloneProject(url: string, name?: string): Promise<string> {
+    const cleanUrl = String(url ?? '').trim();
+    const projectName = (name?.trim() || git.projectNameFromUrl(cleanUrl)).trim();
+    const problem = git.validateClone(cleanUrl, projectName);
+    if (problem) throw new HttpError(400, problem);
+    const folder = this.cfg.projectsDir ?? path.join(os.homedir(), 'projects');
+    const dest = path.join(folder, projectName);
+    if (fs.existsSync(dest)) throw new HttpError(409, `${projectName} already exists in ${folder}`);
+    if (this.discoverProjects().some((p) => p.name === projectName)) throw new HttpError(409, `There is already a project named ${projectName}`);
+    fs.mkdirSync(folder, { recursive: true });
+    try {
+      await git.cloneRepo(cleanUrl, dest);
+    } catch (err) {
+      fs.rmSync(dest, { recursive: true, force: true });
+      const detail = (err as Error).message;
+      throw new HttpError(
+        400,
+        /terminal prompts disabled|could not read Username|Permission denied|Authentication failed/i.test(detail)
+          ? `Couldn't sign in to clone that repository. Set up git credentials on the server first (the README explains how). ${detail}`
+          : detail,
+      );
+    }
+    // In the projects folder it shows up by itself; otherwise it joins the list of added projects.
+    if (!this.cfg.projectsDir) this.state.addProject(dest);
+    this.invalidate();
+    return projectName;
+  }
+
   /** Project, branch and agent for notifications; falls back to the id if the worktree is gone. */
   async label(id: string): Promise<SessionLabel> {
     const ref = await this.find(id).catch(() => null);
@@ -401,12 +451,18 @@ export class SessionManager {
     };
   }
 
+  /** The agent's current transcript in a worktree, if it keeps one. */
+  private transcriptFile(worktreePath: string, id: string): string | null {
+    const transcript = this.agentFor(worktreePath).transcript;
+    return transcript ? transcript.find(worktreePath, this.statuses.get(id).transcriptPath) : null;
+  }
+
   /** The agent's transcript for the chat view and how to read it; no file before the first conversation. */
   async transcriptFor(id: string): Promise<{ file: string | null; parse: (line: string) => ChatItem[] }> {
     const ref = await this.find(id);
     const transcript = this.agentFor(ref.worktree.path).transcript;
     if (!transcript) return { file: null, parse: () => [] };
-    return { file: transcript.find(ref.worktree.path, this.statuses.get(id).transcriptPath), parse: transcript.parse };
+    return { file: this.transcriptFile(ref.worktree.path, id), parse: transcript.parse };
   }
 
   /** Where a session's server (or setup) output is logged; the name must be one it has. */

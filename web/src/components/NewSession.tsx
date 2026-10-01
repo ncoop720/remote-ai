@@ -25,7 +25,27 @@ export function NewSession({ projects, initialProject, onCreated }: {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [cloning, setCloning] = useState(projects.length === 0);
+  const [cloneUrl, setCloneUrl] = useState('');
+  const [cloneBusy, setCloneBusy] = useState(false);
+
   const defaultBranch = projects.find((p) => p.name === project)?.defaultBranch ?? 'main';
+
+  const clone = async () => {
+    setCloneBusy(true);
+    setError(null);
+    try {
+      const { name } = await api.cloneProject(cloneUrl.trim());
+      onCreated();
+      setProject(name);
+      setCloning(false);
+      setCloneUrl('');
+    } catch (err) {
+      setError(errorMessage(err));
+    } finally {
+      setCloneBusy(false);
+    }
+  };
 
   const submit = async (e: FormEvent) => {
     e.preventDefault();
@@ -64,8 +84,32 @@ export function NewSession({ projects, initialProject, onCreated }: {
                 {p.name}
               </button>
             ))}
+            <button type="button" className="chip chip-dashed" aria-expanded={cloning} onClick={() => setCloning((v) => !v)}>
+              + Clone a repo
+            </button>
           </div>
         </div>
+
+        {cloning && (
+          <div className="clone-box">
+            <label className="field">
+              <span>Repository URL</span>
+              <input
+                className="mono"
+                value={cloneUrl}
+                onChange={(e) => setCloneUrl(e.target.value)}
+                placeholder="https://github.com/you/app.git"
+                autoCapitalize="off"
+                autoCorrect="off"
+                spellCheck={false}
+                inputMode="url"
+              />
+            </label>
+            <button type="button" className="btn" disabled={cloneBusy || !cloneUrl.trim()} onClick={() => void clone()}>
+              {cloneBusy ? 'Cloning…' : 'Clone into ~/projects'}
+            </button>
+          </div>
+        )}
 
         <div className="row">
           <label className="field grow">

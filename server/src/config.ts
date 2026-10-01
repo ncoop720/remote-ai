@@ -50,7 +50,8 @@ export function loadConfig(defaults: Partial<Config> = {}): Config {
   const projectsDir =
     env.REMOTE_AI_PROJECTS_DIR ?? (file.projectsDir !== undefined ? file.projectsDir : defaults.projectsDir !== undefined ? defaults.projectsDir : '~/projects');
   return {
-    host: env.REMOTE_AI_HOST ?? file.host ?? defaults.host ?? '127.0.0.1',
+    // "localhost" listens on both 127.0.0.1 and ::1, so clients that try IPv6 first still connect.
+    host: env.REMOTE_AI_HOST ?? file.host ?? defaults.host ?? 'localhost',
     port: Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787),
     wifiPort: Number(env.REMOTE_AI_WIFI_PORT ?? file.wifiPort ?? defaults.wifiPort ?? Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787) + 1),
     previewPort: Number(file.previewPort ?? defaults.previewPort ?? Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787) + 2),

@@ -5,7 +5,7 @@ import { findExecutable } from '../../which.js';
 import type { AgentAdapter, LaunchOptions } from '../types.js';
 import { reduceHook, type HookPayload } from './hooks.js';
 import { parseVisiblePrompt } from './prompt.js';
-import { findTranscript, parseTranscriptLine } from './transcript.js';
+import { findTranscript, parseTranscriptLine, readTitle } from './transcript.js';
 
 /** Values for `claude --permission-mode`. "manual" asks before every action (formerly "default"). */
 export const CLAUDE_MODES = ['auto', 'manual', 'acceptEdits', 'plan'] as const;
@@ -94,6 +94,6 @@ export function claudeAdapter(opts: { command: string; settingsPath: string }): 
 
     parsePrompt: parseVisiblePrompt,
 
-    transcript: { find: findTranscript, parse: parseTranscriptLine },
+    transcript: { find: findTranscript, parse: parseTranscriptLine, title: readTitle },
   };
 }

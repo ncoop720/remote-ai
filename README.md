@@ -71,7 +71,7 @@ Clone the repositories you want to work on into `~/projects`. Each one shows up 
 
 ### On Windows (WSL2)
 
-Run the same commands inside Ubuntu. WSL needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`, the default on recent Ubuntu images) and, because it stops a distro shortly after its last terminal closes, `--wsl-autostart` keeps it running: it sets `instanceIdleTimeout=-1` in `%UserProfile%\.wslconfig` and adds a hidden Windows startup entry that boots the distro when you log in. With `networkingMode=mirrored` in `.wslconfig`, Ubuntu and Windows share `localhost`, so dev servers and databases on either side can reach each other.
+Run the same commands inside Ubuntu. WSL needs systemd (`[boot] systemd=true` in `/etc/wsl.conf`, the default on recent Ubuntu images) and, because it stops a distro shortly after its last terminal closes, `--wsl-autostart` keeps it running: it sets `instanceIdleTimeout=-1` in `%UserProfile%\.wslconfig` and adds a hidden Windows startup entry that boots the distro when you log in. With `networkingMode=mirrored` in `.wslconfig`, Ubuntu and Windows share `localhost`, so dev servers and databases on either side can reach each other. Mirrored networking only bridges IPv4 loopback: browsers fall back to it by themselves, but if a Windows tool stalls on `localhost`, use `127.0.0.1`.
 
 ### Reaching it from your phone
 
@@ -142,12 +142,16 @@ Set environment variables, or put the same keys (camelCase) in `~/.remote-ai/con
 | Env var | Default | |
 |---|---|---|
 | `REMOTE_AI_PORT` | `8787` | HTTP port |
-| `REMOTE_AI_HOST` | `127.0.0.1` | Bind address |
+| `REMOTE_AI_HOST` | `localhost` | Bind address (localhost = 127.0.0.1 and ::1) |
 | `REMOTE_AI_PROJECTS_DIR` | `~/projects` | Where project checkouts live |
 | `REMOTE_AI_WORKTREES_DIR` | `~/worktrees` | Where new worktrees are created |
 | `REMOTE_AI_DATA_DIR` | `~/.remote-ai` | State, logs, hook settings, the session host's socket |
 | `REMOTE_AI_CLAUDE_COMMAND` | `claude` | Command used to start Claude Code |
 | `REMOTE_AI_PORT_BASE` | `3100` | First dev-server port |
+| `REMOTE_AI_PASSWORD` | (none) | Require a login for proxied and remote requests |
+| `REMOTE_AI_PUSH_SUBJECT` | repo URL | Contact sent to push services (VAPID subject) |
+
+With the service, set these in `~/.config/systemd/user/remote-ai.service` (`Environment=KEY=value`) or in `~/.remote-ai/config.json`, then `systemctl --user restart remote-ai`.
 
 ## Development
 

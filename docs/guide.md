@@ -53,13 +53,13 @@ The sidebar (or, on a phone, the home screen) lists your projects and their sess
 | **Claude exited** | Claude's own session ended. |
 | **Stopped** | Nothing is running in this worktree. |
 
-On a phone, sessions are grouped by state (Needs you, Working, Idle, Not running), and the chips at the top filter by project.
+Next to each branch is the title Claude gave its latest conversation, so you can tell sessions apart. On a phone, sessions are grouped by state (Needs you, Working, Idle, Not running), and the chips at the top filter by project. When sessions need you, the browser tab's title counts them: "(2) remote-ai".
 
 ### Start a session
 
 Choose **New** (or **+** next to a project) and fill in:
 
-- **Project**: which repository.
+- **Project**: which repository. **+ Clone a repo** clones one from an `https://` or `git@host:owner/repo` URL into `~/projects` and adds it. Cloning never asks for a password, so for private repositories set up git credentials (an SSH key, or a credential helper) on the computer first.
 - **New branch**: the branch to work on, such as `feat/dark-mode`. If it doesn't exist, it's created from **From** (the repository's main branch unless you say otherwise). If it does exist, that branch is used.
 - **First prompt** (optional): what Claude should start on.
 - **Permissions**: how much Claude may do without asking.
@@ -70,10 +70,10 @@ Choose **New** (or **+** next to a project) and fill in:
 
 remote-ai creates the worktree in `~/worktrees/<project>/<branch>`, copies files listed in the repository's `.worktreeinclude` (such as `.env` files), runs the project's setup if it has one, and starts Claude there. The main checkout is a session too, for working directly on it.
 
-### Stop, resume and remove
+### End, resume and remove
 
-- **Stop** ends Claude, the dev servers and any setup in that session. The worktree and its changes stay.
-- A stopped session offers **New conversation** or **Resume last conversation** (Claude's own `--continue`), with a choice of permissions.
+- **End session** (**End** on a phone) stops Claude, the dev servers and any setup in that session. The worktree and its changes stay.
+- An ended session offers **New conversation** or **Resume last conversation** (Claude's own `--continue`), with a choice of permissions.
 - **Remove worktree** stops the session and deletes its folder. The branch itself is kept, so nothing committed is lost. If the worktree has uncommitted changes, remove asks first; **Discard changes and remove** deletes them.
 
 Sessions don't depend on the window or the app being open: they run in a background process (the session host) that keeps going when you close the window, quit the app or update it.
@@ -83,9 +83,13 @@ Sessions don't depend on the window or the app being open: they run in a backgro
 A session has these views. On a computer, the left side switches between **Terminal** and **Chat**, and **Preview & logs** opens a column on the right. On a phone they're tabs: **Chat**, **Terminal**, **Logs** and **Preview**.
 
 - **Terminal** is Claude Code itself, live. Type into it as you would in your own terminal. Any number of browsers can watch the same session.
-- **Chat** shows the conversation as messages: your prompts, Claude's replies, and each tool Claude used as a row you can tap to see what it ran and what came back. Type at the bottom to send a message.
+- **Chat** shows the conversation as messages: your prompts, Claude's replies, and each tool Claude used as a row you can tap to see what it ran and what came back. Type at the bottom to send a message. While Claude is working, **Interrupt** stops its current turn (like pressing Esc) without ending the session.
 - **Questions and approvals.** When Claude shows a menu (permission to run a command, a question, the folder-trust check on a new worktree), it appears as buttons under the conversation. Tap one to answer.
 - **Phone keys.** The Terminal tab on a phone has a key bar for keys phones lack: **Esc**, **^C**, **⇧Tab** (switches Claude's mode), **Tab**, **↑**, **↓** and **⏎**.
+
+### Review changes
+
+Once a session has changed files, its header shows a **Changes** button with the line count (**+12 −3**), or the number of new files. It opens everything the branch changed since it started, committed or not, new files included, as a diff per file. Use it to check Claude's work from your phone before you merge.
 
 ## Dev servers, logs and preview
 

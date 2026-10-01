@@ -49,5 +49,7 @@ export interface AgentAdapter {
   transcript?: {
     find(cwd: string, reported: string | undefined): string | null;
     parse(line: string): ChatItem[];
+    /** The title the agent gave the conversation, if it names them. */
+    title?(file: string | null): string | null;
   };
 }
