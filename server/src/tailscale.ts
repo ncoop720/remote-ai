@@ -10,6 +10,8 @@ export interface TailscaleOptions {
   dataDir: string;
   /** The dashboard, as the proxy should reach it. */
   target: string;
+  /** The dashboard's preview proxy, for dev-server ports. */
+  previewTarget?: string;
   /** Marks the proxy's requests, so the server believes the login it adds. */
   secret: string;
   log: { info(msg: string): void; warn(obj: object, msg: string): void };
@@ -53,6 +55,7 @@ export class Tailscale extends EventEmitter {
   private wanted = false;
   private failures = 0;
   private restartTimer: ReturnType<typeof setTimeout> | undefined;
+  private previewPorts: number[] = [];
 
   constructor(private readonly opts: TailscaleOptions) {
     super();
@@ -81,6 +84,7 @@ export class Tailscale extends EventEmitter {
     if (this.child || !this.opts.binary) return;
     clearTimeout(this.restartTimer);
     const args = ['--state-dir', path.join(this.opts.dataDir, 'tailscale'), '--hostname', tailnetHostname(), '--target', this.opts.target];
+    if (this.opts.previewTarget) args.push('--preview-target', this.opts.previewTarget);
     const child = spawn(this.opts.binary, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       windowsHide: true,
@@ -108,6 +112,7 @@ export class Tailscale extends EventEmitter {
       for (const line of text.split('\n')) if (line.trim()) this.opts.log.info(`tailscale: ${line.trim()}`);
     });
     child.stdin!.on('error', () => undefined);
+    this.sendPorts();
     child.on('error', (err) => {
       this.opts.log.warn({ err }, 'tailscale sidecar failed to start');
       this.set({ state: 'error', message: err.message });
@@ -140,6 +145,16 @@ export class Tailscale extends EventEmitter {
     // Closing stdin tells it to stop; make sure it does.
     child.stdin!.end();
     setTimeout(() => child.exitCode === null && child.kill(), 3000).unref();
+  }
+
+  /** Serve these dev-server ports on the tailnet too, for previews. */
+  setPreviewPorts(ports: number[]): void {
+    this.previewPorts = ports;
+    this.sendPorts();
+  }
+
+  private sendPorts(): void {
+    this.child?.stdin!.write(`${JSON.stringify({ cmd: 'ports', ports: this.previewPorts })}\n`);
   }
 
   /** Sign this computer out of the tailnet (it will offer to sign in again). */

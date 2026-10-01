@@ -2,10 +2,16 @@
 // (with tsnet, so the Tailscale app isn't needed on this computer), serves HTTPS with the
 // certificate Tailscale provides, and passes requests to the dashboard on localhost.
 //
-// The dashboard server starts it and talks to it over stdio. It writes its state as JSON lines
-// on stdout and takes {"cmd":"logout"} on stdin; when stdin closes (the server exited), it stops.
+// It also serves the sessions' dev servers for previews: the dashboard says which ports they use,
+// and each is served on the same port of this tailnet device (https://<device>:3100), passed to
+// the dashboard's preview proxy with the port in X-Remote-AI-Preview-Port.
 //
-//	remote-ai-tailscale --state-dir DIR --hostname NAME --target http://127.0.0.1:8787
+// The dashboard server starts it and talks to it over stdio. It writes its state as JSON lines on
+// stdout and takes {"cmd":"logout"} and {"cmd":"ports","ports":[3100]} on stdin; when stdin closes
+// (the server exited), it stops.
+//
+//	remote-ai-tailscale --state-dir DIR --hostname NAME --target http://127.0.0.1:8787 \
+//	  --preview-target http://127.0.0.1:8789
 //
 // Requests are marked with X-Remote-AI-Proxy (the secret from $REMOTE_AI_PROXY_SECRET) and
 // X-Remote-AI-Tailscale-Login (who sent them), so the server can trust its owner's own devices.
@@ -68,6 +74,7 @@ func main() {
 	stateDir := flag.String("state-dir", "", "where to keep this device's Tailscale state")
 	hostname := flag.String("hostname", "remote-ai", "device name on the tailnet")
 	target := flag.String("target", "http://127.0.0.1:8787", "the dashboard to serve")
+	previewTarget := flag.String("preview-target", "", "the dashboard's preview proxy, for dev-server ports")
 	flag.Parse()
 	if *stateDir == "" {
 		fail("--state-dir is required")
@@ -75,6 +82,12 @@ func main() {
 	backend, err := url.Parse(*target)
 	if err != nil {
 		fail("bad --target: %v", err)
+	}
+	var previews *url.URL
+	if *previewTarget != "" {
+		if previews, err = url.Parse(*previewTarget); err != nil {
+			fail("bad --preview-target: %v", err)
+		}
 	}
 	// Diagnostics go to stderr, which the server logs; stdout carries only events.
 	log.SetOutput(os.Stderr)
@@ -100,35 +113,63 @@ func main() {
 		fail("%v", err)
 	}
 
+	n := &node{srv: srv, lc: lc, backend: backend, previews: previews, secret: os.Getenv("REMOTE_AI_PROXY_SECRET"), listeners: map[int]net.Listener{}}
+	n.loginOf = n.whois
 	ctx, cancel := context.WithCancel(context.Background())
-	go commands(ctx, cancel, lc)
-	go serve(ctx, srv, lc, backend)
+	go n.commands(ctx, cancel)
+	go n.serve(ctx)
 	<-ctx.Done()
 }
 
+// node is this device on the tailnet: what it serves, and on which ports.
+type node struct {
+	srv      *tsnet.Server
+	lc       *local.Client
+	backend  *url.URL
+	previews *url.URL
+	secret   string
+	loginOf  func(ctx context.Context, remoteAddr string) string
+
+	mu        sync.Mutex
+	running   bool // the dashboard is being served; previews can be too
+	https     bool
+	dnsName   string
+	wanted    []int // dev-server ports to serve, from the dashboard
+	listeners map[int]net.Listener
+}
+
 // commands reads stdin; when it closes, the dashboard server is gone and so is the reason to run.
-func commands(ctx context.Context, cancel context.CancelFunc, lc *local.Client) {
+func (n *node) commands(ctx context.Context, cancel context.CancelFunc) {
 	defer cancel()
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		var cmd struct{ Cmd string }
+		var cmd struct {
+			Cmd   string
+			Ports []int
+		}
 		if json.Unmarshal(scanner.Bytes(), &cmd) != nil {
 			continue
 		}
-		if cmd.Cmd == "logout" {
-			if err := lc.Logout(ctx); err != nil {
+		switch cmd.Cmd {
+		case "logout":
+			if err := n.lc.Logout(ctx); err != nil {
 				log.Printf("logout: %v", err)
 			}
+		case "ports":
+			n.mu.Lock()
+			n.wanted = cmd.Ports
+			n.mu.Unlock()
+			n.syncPreviews()
 		}
 	}
 }
 
 // serve waits for the device to be signed in, then serves the dashboard. It reports the state
 // as it changes, including signing out and back in.
-func serve(ctx context.Context, srv *tsnet.Server, lc *local.Client, backend *url.URL) {
+func (n *node) serve(ctx context.Context) {
 	listening := false
 	for ctx.Err() == nil {
-		st, err := lc.StatusWithoutPeers(ctx)
+		st, err := n.lc.StatusWithoutPeers(ctx)
 		if err != nil {
 			log.Printf("status: %v", err)
 			time.Sleep(time.Second)
@@ -152,13 +193,17 @@ func serve(ctx context.Context, srv *tsnet.Server, lc *local.Client, backend *ur
 			}
 			https := st.CurrentTailnet != nil && st.CurrentTailnet.MagicDNSEnabled && len(st.CertDomains) > 0
 			if !listening {
-				if err := listen(srv, lc, backend, https, dnsName); err != nil {
+				if err := n.listen(https, dnsName); err != nil {
 					fail("listening on the tailnet: %v", err)
 				}
 				listening = true
 				if https {
-					go warmCertificate(ctx, lc, dnsName, login)
+					go warmCertificate(ctx, n.lc, dnsName)
 				}
+				n.mu.Lock()
+				n.running, n.https, n.dnsName = true, https, dnsName
+				n.mu.Unlock()
+				n.syncPreviews()
 			}
 			scheme := "http"
 			if https {
@@ -177,7 +222,7 @@ func serve(ctx context.Context, srv *tsnet.Server, lc *local.Client, backend *ur
 }
 
 // warmCertificate fetches the HTTPS certificate now, so the first phone to connect doesn't wait for it.
-func warmCertificate(ctx context.Context, lc *local.Client, domain, login string) {
+func warmCertificate(ctx context.Context, lc *local.Client, domain string) {
 	ctx, cancel := context.WithTimeout(ctx, 2*time.Minute)
 	defer cancel()
 	if _, _, err := lc.CertPair(ctx, domain); err != nil {
@@ -185,42 +230,90 @@ func warmCertificate(ctx context.Context, lc *local.Client, domain, login string
 	}
 }
 
-func listen(srv *tsnet.Server, lc *local.Client, backend *url.URL, https bool, dnsName string) error {
-	handler := proxy(lc, backend)
-	if !https {
-		ln, err := srv.Listen("tcp", ":80")
+// listenOn opens a tailnet port, with TLS when the tailnet gives this device a certificate.
+func (n *node) listenOn(port int, https bool) (net.Listener, error) {
+	addr := fmt.Sprintf(":%d", port)
+	if https {
+		return n.srv.ListenTLS("tcp", addr)
+	}
+	return n.srv.Listen("tcp", addr)
+}
+
+func (n *node) listen(https bool, dnsName string) error {
+	port := 80
+	if https {
+		port = 443
+	}
+	ln, err := n.listenOn(port, https)
+	if err != nil {
+		return err
+	}
+	go http.Serve(ln, newProxy(n.backend, n.secret, n.loginOf, 0))
+	if https {
+		// Plain http on the tailnet just points to https.
+		plain, err := n.srv.Listen("tcp", ":80")
 		if err != nil {
 			return err
 		}
-		go http.Serve(ln, handler)
-		return nil
+		go http.Serve(plain, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			http.Redirect(w, r, "https://"+dnsName+r.URL.RequestURI(), http.StatusMovedPermanently)
+		}))
 	}
-	tlsLn, err := srv.ListenTLS("tcp", ":443")
-	if err != nil {
-		return err
-	}
-	go http.Serve(tlsLn, handler)
-	// Plain http on the tailnet just points to https.
-	ln, err := srv.Listen("tcp", ":80")
-	if err != nil {
-		return err
-	}
-	go http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		http.Redirect(w, r, "https://"+dnsName+r.URL.RequestURI(), http.StatusMovedPermanently)
-	}))
 	return nil
 }
 
-// proxy passes requests (and WebSockets, and event streams) to the dashboard, saying who sent them.
-func proxy(lc *local.Client, backend *url.URL) http.Handler {
-	secret := os.Getenv("REMOTE_AI_PROXY_SECRET")
+// syncPreviews serves exactly the dev-server ports the dashboard asked for, once running.
+func (n *node) syncPreviews() {
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	if !n.running || n.previews == nil {
+		return
+	}
+	wanted := map[int]bool{}
+	for _, p := range n.wanted {
+		if p >= 1024 && p <= 65535 {
+			wanted[p] = true
+		}
+	}
+	for port, ln := range n.listeners {
+		if !wanted[port] {
+			ln.Close()
+			delete(n.listeners, port)
+		}
+	}
+	for port := range wanted {
+		if n.listeners[port] != nil {
+			continue
+		}
+		ln, err := n.listenOn(port, n.https)
+		if err != nil {
+			log.Printf("preview port %d: %v", port, err)
+			continue
+		}
+		n.listeners[port] = ln
+		go http.Serve(ln, newProxy(n.previews, n.secret, n.loginOf, port))
+	}
+}
+
+// whois is the Tailscale login of whoever sent a request; empty for tagged devices and unknowns.
+func (n *node) whois(ctx context.Context, remoteAddr string) string {
+	res, err := n.lc.WhoIs(ctx, remoteAddr)
+	if err != nil || res.UserProfile == nil || res.Node == nil || res.Node.IsTagged() {
+		return ""
+	}
+	return res.UserProfile.LoginName
+}
+
+// newProxy passes requests (and WebSockets, and event streams) to the dashboard, saying who sent
+// them. A previewPort says which dev server the request is for.
+func newProxy(backend *url.URL, secret string, loginOf func(context.Context, string) string, previewPort int) http.Handler {
 	var cacheMu sync.Mutex
 	type who struct {
 		login   string
 		expires time.Time
 	}
 	cache := map[string]who{}
-	loginOf := func(ctx context.Context, remoteAddr string) string {
+	cachedLoginOf := func(ctx context.Context, remoteAddr string) string {
 		host, _, _ := net.SplitHostPort(remoteAddr)
 		cacheMu.Lock()
 		w, ok := cache[host]
@@ -228,10 +321,7 @@ func proxy(lc *local.Client, backend *url.URL) http.Handler {
 		if ok && time.Now().Before(w.expires) {
 			return w.login
 		}
-		login := ""
-		if res, err := lc.WhoIs(ctx, remoteAddr); err == nil && res.UserProfile != nil && res.Node != nil && !res.Node.IsTagged() {
-			login = res.UserProfile.LoginName
-		}
+		login := loginOf(ctx, remoteAddr)
 		cacheMu.Lock()
 		cache[host] = who{login, time.Now().Add(time.Minute)}
 		cacheMu.Unlock()
@@ -249,8 +339,11 @@ func proxy(lc *local.Client, backend *url.URL) http.Handler {
 				}
 			}
 			pr.Out.Header.Set("X-Remote-AI-Proxy", secret)
-			if login := loginOf(pr.In.Context(), pr.In.RemoteAddr); login != "" {
+			if login := cachedLoginOf(pr.In.Context(), pr.In.RemoteAddr); login != "" {
 				pr.Out.Header.Set("X-Remote-AI-Tailscale-Login", login)
+			}
+			if previewPort != 0 {
+				pr.Out.Header.Set("X-Remote-AI-Preview-Port", fmt.Sprint(previewPort))
 			}
 		},
 		// Event streams (session status, logs, chat) must not be buffered.

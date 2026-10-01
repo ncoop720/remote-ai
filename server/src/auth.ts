@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import type { IncomingHttpHeaders } from 'node:http';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { DEVICE_COOKIE, DEVICE_MAX_AGE_S, type Devices } from './devices.js';
 import type { DeviceInfo } from '../../shared/types.js';
@@ -33,6 +34,12 @@ export function isLocalRequest(remoteAddress: string | undefined, headers: Recor
 }
 
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest();
+
+/** What deciding access needs from a request: a Fastify one, or a plain Node one (previews). */
+export interface RequestLike {
+  headers: IncomingHttpHeaders;
+  socket: { remoteAddress?: string };
+}
 
 export interface AuthOptions {
   password?: string;
@@ -87,7 +94,7 @@ export class Auth {
     return hash(token).toString('hex');
   }
 
-  loggedIn(req: FastifyRequest): boolean {
+  loggedIn(req: RequestLike): boolean {
     const token = parseCookies(req.headers.cookie)[COOKIE];
     if (!token) return false;
     const expires = this.sessions[this.tokenKey(token)];
@@ -95,12 +102,12 @@ export class Auth {
   }
 
   /** The paired device this request comes from, if any. */
-  device(req: FastifyRequest): DeviceInfo | null {
+  device(req: RequestLike): DeviceInfo | null {
     return this.devices.verify(parseCookies(req.headers.cookie)[DEVICE_COOKIE]);
   }
 
   /** The request came through the built-in Tailscale proxy (its secret is on it). */
-  viaTailscale(req: FastifyRequest): boolean {
+  viaTailscale(req: RequestLike): boolean {
     const secret = this.opts.proxySecret;
     const given = req.headers['x-remote-ai-proxy'];
     return Boolean(secret) && typeof given === 'string' && given.length === secret!.length &&
@@ -108,13 +115,13 @@ export class Auth {
   }
 
   /** Sent through the built-in Tailscale proxy by a device signed in as the same person as this computer. */
-  ownTailnetDevice(req: FastifyRequest): boolean {
+  ownTailnetDevice(req: RequestLike): boolean {
     const owner = this.opts.tailnetOwner?.();
     const login = req.headers['x-remote-ai-tailscale-login'];
     return Boolean(owner) && login === owner && this.viaTailscale(req);
   }
 
-  allowed(req: FastifyRequest): boolean {
+  allowed(req: RequestLike): boolean {
     return (
       isLocalRequest(req.socket.remoteAddress, req.headers) ||
       this.device(req) !== null ||

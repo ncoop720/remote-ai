@@ -10,7 +10,7 @@ import { expandHome, type Config } from './config.js';
 import { sessionId, slug } from './ids.js';
 import type { HostClient } from './hostclient.js';
 import type { TermInfo, TermRef } from './host/protocol.js';
-import { listeningPorts } from './ports.js';
+import { listeningPorts, type ListeningProcess } from './ports.js';
 import type { SessionLabel } from './push.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
@@ -35,6 +35,28 @@ interface WorktreeRef {
   projectPath: string;
   worktree: Worktree;
   isMain: boolean;
+}
+
+const inside = (dir: string, root: string) => dir === root || dir.startsWith(root + path.sep);
+
+/**
+ * The listening ports that belong to a session: those whose process runs inside its worktree (the
+ * deepest worktree, when they nest), or else that one of its terminals started, however deep down.
+ * Working directories aren't available on Windows, and a server may run outside its worktree.
+ */
+export function sessionPorts(
+  ports: ListeningProcess[],
+  session: { path: string; terminalPids: number[] },
+  allPaths: string[],
+): ListeningPort[] {
+  const pids = new Set(session.terminalPids);
+  return ports
+    .filter((p) => {
+      const home = p.cwd === null ? undefined : allPaths.filter((root) => inside(p.cwd!, root)).sort((a, b) => b.length - a.length)[0];
+      if (home !== undefined) return home === session.path;
+      return pids.has(p.pid) || p.ancestors.some((a) => pids.has(a));
+    })
+    .map(({ port, pid, command }) => ({ port, pid, command }));
 }
 
 /** A main git checkout: worktrees have a `.git` file, not a directory. */
@@ -134,22 +156,23 @@ export class SessionManager {
     ]);
     const termsBySession = new Map<string, TermInfo[]>();
     for (const t of terms) termsBySession.set(t.session, [...(termsBySession.get(t.session) ?? []), t]);
+    const listed = await Promise.all(
+      projects.map(async (p) => ({
+        ...p,
+        worktrees: (await git.listWorktrees(p.path).catch(() => [] as Worktree[])).filter((w) => !w.bare && !w.prunable),
+      })),
+    );
+    // Worktrees can nest, even across projects, so ports are placed knowing all of them.
+    const allPaths = listed.flatMap((p) => p.worktrees.map((w) => w.path));
+    // remote-ai's own listeners (dashboard, Wi-Fi, previews) aren't a session's, even run from a worktree.
+    const ownPorts = new Set([this.cfg.port, this.cfg.wifiPort, this.cfg.previewPort]);
+    const candidates = ports.filter((p) => p.pid !== process.pid && !ownPorts.has(p.port));
     const index: WorktreeRef[] = [];
-    const selfPort = this.cfg.port;
-    // A port belongs to the worktree its process runs in; nested paths go to the longest match.
-    const portsIn = (root: string, all: string[]): ListeningPort[] =>
-      ports
-        .filter((p) => p.port !== selfPort && (p.cwd === root || p.cwd.startsWith(root + path.sep)))
-        .filter((p) => !all.some((other) => other.length > root.length && (p.cwd === other || p.cwd.startsWith(other + path.sep))))
-        .map(({ port, pid, command }) => ({ port, pid, command }));
 
     const result = await Promise.all(
-      projects.map(async (p): Promise<ProjectInfo> => {
-        const worktrees = (await git.listWorktrees(p.path).catch(() => [] as Worktree[])).filter(
-          (w) => !w.bare && !w.prunable,
-        );
+      listed.map(async (p): Promise<ProjectInfo> => {
+        const { worktrees } = p;
         const defaultBranch = worktrees[0]?.branch ?? null;
-        const allPaths = worktrees.map((w) => w.path);
 
         const sessions = await Promise.all(
           worktrees.map(async (wt, i): Promise<SessionInfo> => {
@@ -180,7 +203,7 @@ export class SessionManager {
               base,
               status: isRunning ? this.statuses.get(id) : { state: 'stopped', updatedAt: 0 },
               dev: this.dev.info({ id, path: wt.path }, config, sessionTerms),
-              ports: portsIn(wt.path, allPaths),
+              ports: sessionPorts(candidates, { path: wt.path, terminalPids: sessionTerms.filter((t) => t.alive).map((t) => t.pid) }, allPaths),
             };
           }),
         );

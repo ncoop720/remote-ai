@@ -109,7 +109,12 @@ Describe a project's dev servers in `.remote-ai.json` at the repo root:
 
 Output goes to `~/.remote-ai/logs/<session>/<name>.log` and streams to the Logs panel, where you can pick lines and paste them into Claude's prompt. Claude is told about the servers, their ports and log files (via `--append-system-prompt`), and how to restart them, so it reads the logs instead of starting its own copies.
 
-The Preview panel shows any port a process inside the worktree listens on, at `http://<the host you opened the dashboard on>:<port>`. Dev servers that only listen on localhost can be previewed from the machine itself; to preview them from your phone they need to listen on all interfaces (for Vite, `--host`). When the dashboard itself is served over https (e.g. `tailscale serve`), browsers won't embed http pages, so use "Open ↗".
+The Preview panel shows the ports a session's processes listen on: those running inside its worktree, or started from its terminals (found with `ss` on Linux, `lsof` on macOS, `netstat` on Windows). On the computer itself it shows each port directly (`http://127.0.0.1:<port>`). Other devices see them through the address they reached remote-ai on, so dev servers that only listen on localhost work too, and nothing needs `--host`:
+
+- **Tailscale**: each port is served on the same port of the tailnet device, over https (`https://remote-ai-<computer>.<tailnet>.ts.net:3100`), so previews show inside the https dashboard.
+- **Wi-Fi**: port P is served on P + 10000 (`http://<computer>:13100` for 3100).
+
+Either way the device must be paired, only ports that belong to a session are served, and the dev server sees requests as if from localhost (so Vite's and Next's host checks pass) without remote-ai's cookies; hot reload works. A server install reached through `tailscale serve` still embeds `http://<host>:<port>`, which browsers block inside https; use "Open ↗" there.
 
 ## Chat view and notifications
 
@@ -163,5 +168,5 @@ v2:
 - [x] Session host and agent adapters: native terminals on macOS, Windows and Linux instead of tmux; Claude Code as the first adapter
 - [x] Desktop app: installers, tray, start at login, updates, first-run checklist
 - [x] Pairing: QR code for phones, then built-in Tailscale with https
-- [ ] Preview through the app's secure address
+- [x] Preview through the app's secure address
 - [ ] Dev-server detection, and Set up with Claude

@@ -232,6 +232,12 @@ export interface PairingCode {
   links: { via: 'tailscale' | 'wifi'; url: string; qrSvg: string }[];
 }
 
+/**
+ * How this browser reaches the sessions' dev servers for previews: port P is at
+ * <scheme>://<host>:<P + offset>. Null: directly, at this page's hostname and port P.
+ */
+export type PreviewAccess = { scheme: 'http' | 'https'; host: string; offset: number } | null;
+
 /** How this browser may use the dashboard, from GET /api/auth. */
 export interface AuthInfo {
   /** This browser has to log in or pair first. */

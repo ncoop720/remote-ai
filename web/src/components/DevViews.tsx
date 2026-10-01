@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { api, errorMessage } from '../api';
 import { isErrorLine, lineText, parseAnsi } from '../ansi';
-import type { DevServerInfo, SessionInfo } from '../../../shared/types';
+import type { DevServerInfo, PreviewAccess, SessionInfo } from '../../../shared/types';
 import { Play, Stop } from './icons';
 
 const MAX_TEXT = 400_000;
@@ -211,9 +211,29 @@ export function LogsView({ session }: { session: SessionInfo }) {
   );
 }
 
-/** The session's web pages. Dev servers are plain http on this machine, reached by port. */
+let previewAccess: Promise<PreviewAccess> | null = null;
+
+/**
+ * How this browser reaches dev servers: directly by port on this computer, or through the address
+ * it came in on (Tailscale or Wi-Fi), where remote-ai serves each session's ports. Asked once.
+ */
+function usePreviewAccess(): PreviewAccess | undefined {
+  const [access, setAccess] = useState<PreviewAccess | undefined>(undefined);
+  useEffect(() => {
+    previewAccess ??= api.preview().catch(() => null);
+    void previewAccess.then(setAccess);
+  }, []);
+  return access;
+}
+
+export function previewUrl(access: PreviewAccess, port: number, path: string): string {
+  return access ? `${access.scheme}://${access.host}:${port + access.offset}${path}` : `http://${location.hostname}:${port}${path}`;
+}
+
+/** The session's web pages: its dev servers, by port. */
 export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDesktop: boolean }) {
   const { ports } = session;
+  const access = usePreviewAccess();
   const [port, setPort] = useState<number | null>(null);
   const [path, setPath] = useState('/');
   const [draft, setDraft] = useState('/');
@@ -236,8 +256,10 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
     );
   }
 
-  const url = `http://${location.hostname}:${current}${path}`;
-  const blocked = location.protocol === 'https:';
+  if (access === undefined) return <div className="preview-empty muted">Loading…</div>;
+  const url = previewUrl(access, current, path);
+  // An https page can't show an http one: only when reached through a proxy remote-ai doesn't run.
+  const blocked = url.startsWith('http:') && location.protocol === 'https:';
   return (
     <section className="preview" aria-label="Web preview">
       <form
@@ -271,7 +293,10 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
       {blocked ? (
         <div className="preview-empty">
           <p>Browsers don't show http pages inside an https page.</p>
-          <p className="muted">Use Open ↗ to view {url} in its own tab.</p>
+          <p className="muted">
+            Use Open ↗ to view {url} in its own tab, or reach remote-ai through its built-in Tailscale, which serves previews
+            over https.
+          </p>
         </div>
       ) : (
         <div className="preview-frame-wrap">

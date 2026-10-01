@@ -8,6 +8,7 @@ import fastifyStatic from '@fastify/static';
 import websocket from '@fastify/websocket';
 import { Auth, isLocalRequest, parseCookies } from './auth.js';
 import { deviceName, Devices } from './devices.js';
+import { PreviewProxy, WIFI_PREVIEW_OFFSET } from './preview.js';
 import { RemoteAccess } from './remote.js';
 import { Tailscale } from './tailscale.js';
 import type { Config } from './config.js';
@@ -20,7 +21,7 @@ import { DevManager } from './dev.js';
 import { HttpError } from './errors.js';
 import { EventHub } from './events.js';
 import { streamLog } from './logs.js';
-import { listeningPorts } from './ports.js';
+import { listeningSockets } from './ports.js';
 import { noticeFor, PushService, type Notice } from './push.js';
 import { AGENT_TERMINAL, SessionManager } from './sessions.js';
 import { StateStore } from './state.js';
@@ -34,6 +35,7 @@ import type {
   CreateSessionRequest,
   DevAction,
   PairingCode,
+  PreviewAccess,
   RemoteInfo,
   SessionStatus,
   SetupInfo,
@@ -105,6 +107,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     binary: opts.tailscaleBinary ?? null,
     dataDir: cfg.dataDir,
     target: `http://127.0.0.1:${cfg.port}`,
+    previewTarget: `http://127.0.0.1:${cfg.previewPort}`,
     secret: proxySecret,
     log: app.log,
   });
@@ -114,7 +117,18 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     proxySecret,
     tailnetOwner: () => tailscale.owner(),
   });
-  const remote = new RemoteAccess({ dataDir: cfg.dataDir, wifiPort: cfg.wifiPort, app, tailscale, log: app.log });
+  // Dev-server pages for other devices: only ports that belong to a session.
+  const previewPorts = new Set<number>();
+  const preview = new PreviewProxy(auth, (port) => previewPorts.has(port));
+  const remote = new RemoteAccess({
+    dataDir: cfg.dataDir,
+    wifiPort: cfg.wifiPort,
+    app,
+    tailscale,
+    preview,
+    previewPort: cfg.previewPort,
+    log: app.log,
+  });
   const sessions = new SessionManager(cfg, host, state, statuses, agents, dev);
   const hub = new EventHub();
 
@@ -236,6 +250,16 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   });
 
   remote.on('change', () => hub.broadcast({ type: 'remote' }));
+
+  // Where this browser finds the dev servers: through the address it came in on.
+  app.get('/api/preview', async (req): Promise<PreviewAccess> => {
+    const hostOnly = (h: unknown) => String(h ?? '').replace(/:\d+$/, '');
+    if (auth.viaTailscale(req)) {
+      return { scheme: req.headers['x-forwarded-proto'] === 'https' ? 'https' : 'http', host: hostOnly(req.headers['x-forwarded-host']), offset: 0 };
+    }
+    if (req.socket.localPort === cfg.wifiPort) return { scheme: 'http', host: hostOnly(req.headers.host), offset: WIFI_PREVIEW_OFFSET };
+    return null;
+  });
 
   app.post<{ Body: { password?: string } }>('/api/login', async (req, reply) => {
     const result = auth.login(req, reply, req.body?.password);
@@ -480,10 +504,25 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     });
   }
 
+  /** Serve the ports sessions listen on now for previews, and nothing else. */
+  const refreshPreviews = async () => {
+    try {
+      const ports = (await sessions.listProjects()).flatMap((p) => p.sessions.flatMap((s) => s.ports.map((x) => x.port)));
+      previewPorts.clear();
+      for (const p of ports) previewPorts.add(p);
+      remote.setPreviewPorts(ports);
+    } catch (err) {
+      app.log.warn({ err }, 'could not list preview ports');
+    }
+  };
+  let previewTimer: ReturnType<typeof setTimeout> | undefined;
+
   // The host reports terminals starting and exiting (an agent quits, a dev server crashes).
   const terminalsChanged = () => {
     sessions.invalidate();
     hub.broadcast({ type: 'sessions' });
+    clearTimeout(previewTimer);
+    previewTimer = setTimeout(() => void refreshPreviews(), 500);
   };
   host.on('spawn', terminalsChanged);
   host.on('exit', terminalsChanged);
@@ -493,7 +532,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   let lastSignature = '';
   const portPoll = setInterval(async () => {
     try {
-      const signature = (await listeningPorts()).map((p) => `${p.port}:${p.pid}`).join(',');
+      const signature = (await listeningSockets()).map((p) => `${p.port}:${p.pid}`).join(',');
       if (signature !== lastSignature) {
         lastSignature = signature;
         terminalsChanged();
@@ -515,6 +554,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
   app.log.info(`projects: ${cfg.projectsDir ?? '(added only)'}  worktrees: ${cfg.worktreesDir}  data: ${cfg.dataDir}`);
 
   await remote.restore();
+  await refreshPreviews();
 
   return {
     url: `http://${cfg.host === '0.0.0.0' || cfg.host === '::' ? '127.0.0.1' : cfg.host}:${port}`,
@@ -525,6 +565,7 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     log: app.log,
     async close() {
       clearInterval(portPoll);
+      clearTimeout(previewTimer);
       await remote.close();
       host.close();
       await app.close();

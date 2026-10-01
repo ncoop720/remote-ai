@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseSs } from './ports.js';
+import { ancestorsOf, parseLsof, parseLsofCwd, parseNetstat, parsePs, parseSs, parseWindowsProcesses } from './ports.js';
 
 test('parseSs reads ports and pids, skipping system ports and duplicates', () => {
   const out = [
@@ -17,4 +17,47 @@ test('parseSs reads ports and pids, skipping system ports and duplicates', () =>
     { port: 3101, pid: 2002 },
     { port: 3101, pid: 2003 },
   ]);
+});
+
+test('macOS: lsof listening sockets and working directories, ps for the process tree', () => {
+  const listen = ['p501', 'n127.0.0.1:3100', 'n[::1]:3100', 'p88', 'n*:631', 'p777', 'n*:5173', ''].join('\n');
+  assert.deepEqual(parseLsof(listen), [
+    { port: 3100, pid: 501 },
+    { port: 3100, pid: 501 },
+    { port: 5173, pid: 777 },
+  ]);
+  assert.deepEqual([...parseLsofCwd('p501\nfcwd\nn/Users/me/worktrees/app/feat\np777\nn/Users/me/code\n')], [
+    [501, '/Users/me/worktrees/app/feat'],
+    [777, '/Users/me/code'],
+  ]);
+  const ps = parsePs('    1     0 /sbin/launchd\n  400     1 /bin/zsh -l\n  501   400 /usr/local/bin/node vite --port 3100\n');
+  assert.deepEqual(ps.get(501), { ppid: 400, command: '/usr/local/bin/node vite --port 3100' });
+  assert.deepEqual(ancestorsOf(501, (p) => ps.get(p)?.ppid), [400, 1]);
+});
+
+test('Windows: netstat LISTENING lines and the process list', () => {
+  const netstat = [
+    '',
+    'Active Connections',
+    '',
+    '  Proto  Local Address          Foreign Address        State           PID',
+    '  TCP    0.0.0.0:135            0.0.0.0:0              LISTENING       1012',
+    '  TCP    127.0.0.1:3100         0.0.0.0:0              LISTENING       8812',
+    '  TCP    [::]:5173              [::]:0                 LISTENING       9100',
+    '  TCP    192.168.1.5:50123      52.1.1.1:443           ESTABLISHED     4400',
+    '',
+  ].join('\r\n');
+  assert.deepEqual(parseNetstat(netstat), [
+    { port: 3100, pid: 8812 },
+    { port: 5173, pid: 9100 },
+  ]);
+  const procs = parseWindowsProcesses(
+    '[{"ProcessId":4,"ParentProcessId":0,"Name":"System"},{"ProcessId":8812,"ParentProcessId":700,"Name":"node.exe"}]',
+  );
+  assert.deepEqual(procs.get(8812), { ppid: 700, command: 'node.exe' });
+  assert.equal(parseWindowsProcesses('{"ProcessId":5,"ParentProcessId":4,"Name":"x"}').size, 1, 'a single object');
+});
+
+test('ancestor walks stop at loops', () => {
+  assert.deepEqual(ancestorsOf(3, (p) => ({ 3: 2, 2: 3 })[p]), [2, 3]);
 });

@@ -7,6 +7,7 @@ import path from 'node:path';
 import type { FastifyInstance } from 'fastify';
 import QRCode from 'qrcode';
 import { formatCode } from './devices.js';
+import { WIFI_PREVIEW_OFFSET, type PreviewProxy } from './preview.js';
 import type { Tailscale } from './tailscale.js';
 import type { PairingCode, RemoteInfo } from '../../shared/types.js';
 
@@ -34,6 +35,30 @@ export function lanAddresses(ifaces: NodeJS.Dict<os.NetworkInterfaceInfo[]> = os
     .map((f) => f.address);
 }
 
+/** A server whose connections, WebSockets included, can all be ended when it stops. */
+function closable(server: http.Server): { server: http.Server; close(): Promise<void> } {
+  const sockets = new Set<net.Socket>();
+  server.on('connection', (socket) => {
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+  });
+  return {
+    server,
+    close: () =>
+      new Promise((resolve) => {
+        for (const socket of sockets) socket.destroy();
+        server.close(() => resolve());
+      }),
+  };
+}
+
+function listen(server: http.Server, port: number, host: string): Promise<NodeJS.ErrnoException | null> {
+  return new Promise((resolve) => {
+    server.once('error', (err: NodeJS.ErrnoException) => resolve(err));
+    server.listen(port, host, () => resolve(null));
+  });
+}
+
 /**
  * How devices reach this computer, beyond localhost: a listener on the local network (off until
  * turned on, since it's plain http), and built-in Tailscale. Both are switched from the Connect a
@@ -45,6 +70,11 @@ export class RemoteAccess extends EventEmitter {
   private wifiServer: http.Server | null = null;
   private wifiError: string | undefined;
   private readonly sockets = new Set<net.Socket>();
+  private previewPorts: number[] = [];
+  /** Wi-Fi preview listeners, by the dev-server port each serves. */
+  private readonly wifiPreviews = new Map<number, { server: http.Server; close(): Promise<void> }>();
+  private tailscalePreviews: { server: http.Server; close(): Promise<void> } | null = null;
+  private syncing = Promise.resolve();
 
   constructor(
     private readonly opts: {
@@ -53,6 +83,9 @@ export class RemoteAccess extends EventEmitter {
       wifiPort: number;
       app: FastifyInstance;
       tailscale: Tailscale;
+      preview: PreviewProxy;
+      /** Where the Tailscale sidecar sends preview requests, on localhost. */
+      previewPort: number;
       log: { info(msg: string): void; warn(obj: object, msg: string): void };
     },
   ) {
@@ -72,8 +105,40 @@ export class RemoteAccess extends EventEmitter {
 
   /** Start whatever was on last time. */
   async restore(): Promise<void> {
+    const previews = closable(this.opts.preview.tailscaleServer());
+    const err = await listen(previews.server, this.opts.previewPort, '127.0.0.1');
+    if (err) this.opts.log.warn({ err }, `previews over Tailscale are off: port ${this.opts.previewPort} is taken`);
+    else this.tailscalePreviews = previews;
     if (this.settings.wifi) await this.startWifi();
     if (this.settings.tailscale) this.opts.tailscale.start();
+  }
+
+  /** The dev-server ports sessions use now: serve those (and only those) for previews. */
+  setPreviewPorts(ports: number[]): void {
+    const next = [...new Set(ports)].sort((a, b) => a - b);
+    if (next.join() === this.previewPorts.join()) return;
+    this.previewPorts = next;
+    this.opts.tailscale.setPreviewPorts(next);
+    this.syncWifiPreviews();
+  }
+
+  /** Over Wi-Fi, each dev-server port P is served on P + 10000, while Wi-Fi is on. */
+  private syncWifiPreviews(): void {
+    this.syncing = this.syncing.then(async () => {
+      const wanted = new Set(this.wifiServer ? this.previewPorts.filter((p) => p + WIFI_PREVIEW_OFFSET <= 65535) : []);
+      for (const [port, listener] of this.wifiPreviews) {
+        if (wanted.has(port)) continue;
+        this.wifiPreviews.delete(port);
+        await listener.close();
+      }
+      for (const port of wanted) {
+        if (this.wifiPreviews.has(port)) continue;
+        const listener = closable(this.opts.preview.wifiServer(port));
+        const err = await listen(listener.server, port + WIFI_PREVIEW_OFFSET, '0.0.0.0');
+        if (err) this.opts.log.warn({ err }, `no Wi-Fi preview for port ${port}`);
+        else this.wifiPreviews.set(port, listener);
+      }
+    });
   }
 
   info(): RemoteInfo {
@@ -126,6 +191,7 @@ export class RemoteAccess extends EventEmitter {
         this.wifiServer = server;
         this.wifiError = undefined;
         this.opts.log.info(`listening on the local network, port ${this.opts.wifiPort}`);
+        this.syncWifiPreviews();
         resolve();
       });
     });
@@ -135,6 +201,7 @@ export class RemoteAccess extends EventEmitter {
     const server = this.wifiServer;
     this.wifiServer = null;
     this.wifiError = undefined;
+    this.syncWifiPreviews();
     if (!server) return Promise.resolve();
     // Open terminals and event streams would keep it alive; end them.
     for (const socket of this.sockets) socket.destroy();
@@ -160,5 +227,7 @@ export class RemoteAccess extends EventEmitter {
   async close(): Promise<void> {
     this.opts.tailscale.stop();
     await this.stopWifi();
+    await this.syncing;
+    await this.tailscalePreviews?.close();
   }
 }

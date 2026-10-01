@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import { DevManager } from './dev.js';
 import type { HostClient } from './hostclient.js';
 import type { TermInfo } from './host/protocol.js';
-import { SessionManager } from './sessions.js';
+import { SessionManager, sessionPorts } from './sessions.js';
 import { StateStore } from './state.js';
 import { StatusStore } from './status.js';
 
@@ -83,4 +83,23 @@ test('removing a project needs its sessions stopped, and leaves folder projects 
   const { sessions: withFolder } = setup(scanned);
   await assert.rejects(withFolder.removeProject('api'), /can't be removed here/);
   fs.rmSync(root, { recursive: true, force: true });
+});
+
+test('ports go to the worktree their process runs in, or else the session whose terminal started it', () => {
+  const proc = (port: number, cwd: string | null, ancestors: number[] = []) => ({ port, pid: port, command: 'node', cwd, ancestors });
+  const ports = [
+    proc(3100, '/w/app/feat'),
+    proc(3101, '/w/app/feat/packages/web'), // deeper inside the same worktree
+    proc(3110, '/w/app/feat/nested'), // a worktree nested inside another
+    proc(3120, null, [900, 500, 1]), // Windows: no cwd, but started under the session's terminal (pid 500)
+    proc(3130, '/tmp', [500]), // runs elsewhere, still started by the session
+    proc(5432, '/var/lib/postgres', [1]), // unrelated
+  ];
+  const all = ['/w/app/feat', '/w/app/feat/nested', '/w/app/main'];
+  assert.deepEqual(
+    sessionPorts(ports, { path: '/w/app/feat', terminalPids: [500] }, all).map((p) => p.port),
+    [3100, 3101, 3120, 3130],
+  );
+  assert.deepEqual(sessionPorts(ports, { path: '/w/app/feat/nested', terminalPids: [] }, all).map((p) => p.port), [3110]);
+  assert.deepEqual(sessionPorts(ports, { path: '/w/app/main', terminalPids: [] }, all), []);
 });

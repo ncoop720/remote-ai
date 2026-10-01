@@ -7,6 +7,8 @@ export interface Config {
   port: number;
   /** Where phones on the same Wi-Fi connect, once that is turned on (the main port stays on localhost). */
   wifiPort: number;
+  /** Where built-in Tailscale hands over preview requests, on localhost. */
+  previewPort: number;
   /** Every git checkout in this directory is a project, besides those added one by one. Null for none. */
   projectsDir: string | null;
   /** Where new worktrees are created: `<worktreesDir>/<project>/<branch>`. */
@@ -51,6 +53,7 @@ export function loadConfig(defaults: Partial<Config> = {}): Config {
     host: env.REMOTE_AI_HOST ?? file.host ?? defaults.host ?? '127.0.0.1',
     port: Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787),
     wifiPort: Number(env.REMOTE_AI_WIFI_PORT ?? file.wifiPort ?? defaults.wifiPort ?? Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787) + 1),
+    previewPort: Number(file.previewPort ?? defaults.previewPort ?? Number(env.REMOTE_AI_PORT ?? file.port ?? defaults.port ?? 8787) + 2),
     projectsDir: projectsDir ? path.resolve(expandHome(projectsDir)) : null,
     worktreesDir: path.resolve(expandHome(env.REMOTE_AI_WORKTREES_DIR ?? file.worktreesDir ?? defaults.worktreesDir ?? '~/worktrees')),
     dataDir,
