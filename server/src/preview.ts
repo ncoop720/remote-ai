@@ -35,18 +35,39 @@ export function withoutOwnCookies(cookie: string | undefined): string | undefine
 }
 
 /**
+ * Where a page served by this same preview lives on this computer, e.g.
+ * https://remote-ai-pc.tail1234.ts.net:5173 → http://localhost:5173. Its public port is moved as far
+ * from its dev server's as this request's is (by WIFI_PREVIEW_OFFSET over Wi-Fi, not at all through
+ * Tailscale). Null for any other site.
+ */
+function localOrigin(origin: string, target: PreviewTarget): string | null {
+  let page: URL;
+  let self: URL;
+  try {
+    page = new URL(origin);
+    self = new URL(target.publicOrigin);
+  } catch {
+    return null;
+  }
+  if (page.protocol !== self.protocol || page.hostname !== self.hostname || !page.port || !self.port) return null;
+  const port = Number(page.port) - (Number(self.port) - target.port);
+  return port >= 1 && port <= 65535 ? `http://localhost:${port}` : null;
+}
+
+/**
  * The request as the dev server should see it: from its own machine. Dev servers guard against
  * other hosts (Vite's allowedHosts, Next's allowedDevOrigins), and the device has already been
- * checked here, so Host and Origin say localhost.
+ * checked here, so Host and Origin say localhost. Origin keeps the page's own port, so a page on
+ * one dev server can call another (a frontend on 5173, its API on 3000).
  */
-export function upstreamHeaders(headers: http.IncomingHttpHeaders, port: number, clientIp: string | undefined): http.OutgoingHttpHeaders {
+export function upstreamHeaders(headers: http.IncomingHttpHeaders, target: PreviewTarget, clientIp: string | undefined): http.OutgoingHttpHeaders {
   const out: http.OutgoingHttpHeaders = {};
   for (const [k, v] of Object.entries(headers)) {
     if (v === undefined || k.startsWith('x-remote-ai-') || k.startsWith('x-forwarded-') || k === 'forwarded') continue;
     out[k] = v;
   }
-  out.host = `localhost:${port}`;
-  if (headers.origin) out.origin = `http://localhost:${port}`;
+  out.host = `localhost:${target.port}`;
+  if (headers.origin) out.origin = localOrigin(headers.origin, target) ?? `http://localhost:${target.port}`;
   const cookie = withoutOwnCookies(headers.cookie);
   if (cookie) out.cookie = cookie;
   else delete out.cookie;
@@ -54,13 +75,18 @@ export function upstreamHeaders(headers: http.IncomingHttpHeaders, port: number,
   return out;
 }
 
-/** Redirects to the dev server's own address point back to where the phone reached it; its cookies can't replace ours. */
-export function downstreamHeaders(headers: http.IncomingHttpHeaders, port: number, publicOrigin: string): http.OutgoingHttpHeaders {
+/**
+ * Redirects to the dev server's own address point back to where the phone reached it, as does
+ * CORS allowing the page's local origin; the dev server's cookies can't replace ours.
+ */
+export function downstreamHeaders(headers: http.IncomingHttpHeaders, target: PreviewTarget, origin: string | undefined): http.OutgoingHttpHeaders {
   const out: http.OutgoingHttpHeaders = { ...headers };
   const location = headers.location;
   if (location) {
-    out.location = location.replace(new RegExp(`^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]):${port}(?=/|$)`), publicOrigin);
+    out.location = location.replace(new RegExp(`^https?://(localhost|127\\.0\\.0\\.1|\\[::1\\]):${target.port}(?=/|$)`), target.publicOrigin);
   }
+  const local = origin ? localOrigin(origin, target) : null;
+  if (local && headers['access-control-allow-origin'] === local) out['access-control-allow-origin'] = origin;
   const cookies = headers['set-cookie'];
   if (cookies) {
     const kept = cookies.filter((c) => !OWN_COOKIES.has(c.slice(0, c.indexOf('=')).trim()));
@@ -111,10 +137,10 @@ export class PreviewProxy {
         port: target.port,
         method: req.method,
         path: req.url,
-        headers: upstreamHeaders(req.headers, target.port, req.socket.remoteAddress),
+        headers: upstreamHeaders(req.headers, target, req.socket.remoteAddress),
       },
       (up) => {
-        res.writeHead(up.statusCode ?? 502, downstreamHeaders(up.headers, target.port, target.publicOrigin));
+        res.writeHead(up.statusCode ?? 502, downstreamHeaders(up.headers, target, req.headers.origin));
         up.pipe(res);
       },
     );
@@ -135,7 +161,7 @@ export class PreviewProxy {
       return;
     }
     const conn = net.connect({ host: 'localhost', port: target.port }, () => {
-      const headers = upstreamHeaders(req.headers, target.port, req.socket.remoteAddress);
+      const headers = upstreamHeaders(req.headers, target, req.socket.remoteAddress);
       const lines = Object.entries(headers).flatMap(([k, v]) => (Array.isArray(v) ? v.map((x) => `${k}: ${x}`) : [`${k}: ${String(v)}`]));
       conn.write(`${req.method} ${req.url} HTTP/1.1\r\n${lines.join('\r\n')}\r\n\r\n`);
       if (head.length) conn.write(head);
