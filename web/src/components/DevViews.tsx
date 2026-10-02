@@ -349,7 +349,14 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
         </div>
       ) : (
         <div className="preview-frame-wrap">
-          <iframe key={`${url}#${reload}`} title={`Preview of ${url}`} src={url} className={narrow ? 'preview-frame narrow' : 'preview-frame'} />
+          {/* The page is cross-origin to the dashboard, and Sign in with Google (FedCM) only runs in such a frame when the parent allows it */}
+          <iframe
+            key={`${url}#${reload}`}
+            title={`Preview of ${url}`}
+            src={url}
+            allow="identity-credentials-get"
+            className={narrow ? 'preview-frame narrow' : 'preview-frame'}
+          />
         </div>
       )}
     </section>
