@@ -52,9 +52,11 @@ test('Windows: netstat LISTENING lines and the process list', () => {
     { port: 5173, pid: 9100 },
   ]);
   const procs = parseWindowsProcesses(
-    '[{"ProcessId":4,"ParentProcessId":0,"Name":"System"},{"ProcessId":8812,"ParentProcessId":700,"Name":"node.exe"}]',
+    '[{"ProcessId":4,"ParentProcessId":0,"Name":"System","CommandLine":null},' +
+      '{"ProcessId":8812,"ParentProcessId":700,"Name":"node.exe","CommandLine":"\\"node\\" C:\\\\code\\\\app\\\\node_modules\\\\vite\\\\bin\\\\vite.js"}]',
   );
-  assert.deepEqual(procs.get(8812), { ppid: 700, command: 'node.exe' });
+  assert.deepEqual(procs.get(8812), { ppid: 700, command: 'node.exe', commandLine: '"node" C:\\code\\app\\node_modules\\vite\\bin\\vite.js' });
+  assert.equal(procs.get(4)?.commandLine, 'System', 'no command line shown');
   assert.equal(parseWindowsProcesses('{"ProcessId":5,"ParentProcessId":4,"Name":"x"}').size, 1, 'a single object');
 });
 

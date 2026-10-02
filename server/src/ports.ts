@@ -11,6 +11,8 @@ export interface ListeningSocket {
 export interface ListeningProcess extends ListeningSocket {
   /** A readable command line: absolute paths shortened to their file name. */
   command: string;
+  /** The whole command line, paths and all. */
+  commandLine: string;
   /** Its working directory, where the OS tells (not on Windows). */
   cwd: string | null;
   /** Parent, grandparent, ... up to the first process. */
@@ -97,8 +99,8 @@ export function parsePs(out: string): Map<number, { ppid: number; command: strin
 }
 
 /** Parse the JSON list of Win32_Process objects PowerShell prints. */
-export function parseWindowsProcesses(out: string): Map<number, { ppid: number; command: string }> {
-  const procs = new Map<number, { ppid: number; command: string }>();
+export function parseWindowsProcesses(out: string): Map<number, { ppid: number; command: string; commandLine: string }> {
+  const procs = new Map<number, { ppid: number; command: string; commandLine: string }>();
   let list: unknown;
   try {
     list = JSON.parse(out);
@@ -106,8 +108,15 @@ export function parseWindowsProcesses(out: string): Map<number, { ppid: number; 
     return procs;
   }
   for (const p of Array.isArray(list) ? list : [list]) {
-    const { ProcessId, ParentProcessId, Name } = (p ?? {}) as { ProcessId?: number; ParentProcessId?: number; Name?: string };
-    if (typeof ProcessId === 'number') procs.set(ProcessId, { ppid: ParentProcessId ?? 0, command: Name ?? '' });
+    const { ProcessId, ParentProcessId, Name, CommandLine } = (p ?? {}) as {
+      ProcessId?: number;
+      ParentProcessId?: number;
+      Name?: string;
+      CommandLine?: string | null;
+    };
+    if (typeof ProcessId === 'number') {
+      procs.set(ProcessId, { ppid: ParentProcessId ?? 0, command: Name ?? '', commandLine: CommandLine ?? Name ?? '' });
+    }
   }
   return procs;
 }
@@ -166,7 +175,7 @@ function linuxDetails(pid: number): Omit<ListeningProcess, 'port' | 'pid'> | nul
         return undefined;
       }
     };
-    return { command: shorten(command), cwd, ancestors: ancestorsOf(pid, parentOf) };
+    return { command: shorten(command), commandLine: command, cwd, ancestors: ancestorsOf(pid, parentOf) };
   } catch {
     return null; // exited since the listing
   }
@@ -193,6 +202,7 @@ export async function listeningPorts(): Promise<ListeningProcess[]> {
       result.push({
         ...s,
         command: shorten(ps.get(s.pid)?.command ?? ''),
+        commandLine: ps.get(s.pid)?.command ?? '',
         cwd: cwd.get(s.pid) ?? null,
         ancestors: ancestorsOf(s.pid, (p) => ps.get(p)?.ppid),
       });
@@ -202,10 +212,17 @@ export async function listeningPorts(): Promise<ListeningProcess[]> {
       '-NoProfile',
       '-NonInteractive',
       '-Command',
-      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name | ConvertTo-Json -Compress',
-    ]).then(parseWindowsProcesses, () => new Map<number, { ppid: number; command: string }>());
+      'Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId,Name,CommandLine | ConvertTo-Json -Compress',
+    ]).then(parseWindowsProcesses, () => new Map<number, { ppid: number; command: string; commandLine: string }>());
     for (const s of found) {
-      result.push({ ...s, command: procs.get(s.pid)?.command ?? '', cwd: null, ancestors: ancestorsOf(s.pid, (p) => procs.get(p)?.ppid) });
+      const proc = procs.get(s.pid);
+      result.push({
+        ...s,
+        command: proc?.command ?? '',
+        commandLine: proc?.commandLine ?? '',
+        cwd: null,
+        ancestors: ancestorsOf(s.pid, (p) => procs.get(p)?.ppid),
+      });
     }
   }
   return result.sort((a, b) => a.port - b.port);

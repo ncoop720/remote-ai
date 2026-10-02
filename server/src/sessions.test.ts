@@ -10,7 +10,7 @@ import type { Config } from './config.js';
 import { DevManager } from './dev.js';
 import type { HostClient } from './hostclient.js';
 import type { TermInfo } from './host/protocol.js';
-import { SessionManager, sessionPorts } from './sessions.js';
+import { mentions, SessionManager, sessionPorts } from './sessions.js';
 import { StateStore } from './state.js';
 import { StatusStore } from './status.js';
 
@@ -86,7 +86,7 @@ test('removing a project needs its sessions stopped, and leaves folder projects 
 });
 
 test('ports go to the worktree their process runs in, or else the session whose terminal started it', () => {
-  const proc = (port: number, cwd: string | null, ancestors: number[] = []) => ({ port, pid: port, command: 'node', cwd, ancestors });
+  const proc = (port: number, cwd: string | null, ancestors: number[] = []) => ({ port, pid: port, command: 'node', commandLine: 'node', cwd, ancestors });
   const ports = [
     proc(3100, '/w/app/feat'),
     proc(3101, '/w/app/feat/packages/web'), // deeper inside the same worktree
@@ -102,4 +102,25 @@ test('ports go to the worktree their process runs in, or else the session whose 
   );
   assert.deepEqual(sessionPorts(ports, { path: '/w/app/feat/nested', terminalPids: [] }, all).map((p) => p.port), [3110]);
   assert.deepEqual(sessionPorts(ports, { path: '/w/app/main', terminalPids: [] }, all), []);
+});
+
+test('without a working directory, a port goes to the worktree its command line runs from', () => {
+  const proc = (port: number, commandLine: string, ancestors: number[] = []) => ({ port, pid: port, command: 'node.exe', commandLine, cwd: null, ancestors });
+  // git lists worktrees with forward slashes; Windows command lines use backslashes and any case
+  const all = ['/code/game', '/code/game-2', '/code/game/nested'];
+  const ports = [
+    proc(5173, '"node" "/code/game/client/node_modules/.bin/../vite/bin/vite.js"', [9999]), // its shell has exited
+    proc(3110, 'node --import file:///code/game/server/node_modules/tsx/dist/loader.mjs src/index.ts', [500]),
+    proc(3120, 'node /code/game-2/server.js'),
+    proc(3130, 'node /code/game/nested/x.js', [500]), // a nested worktree's, though the session started it
+    proc(3140, 'node server.js', [500]), // nothing to go by but the terminal
+  ];
+  assert.deepEqual(sessionPorts(ports, { path: '/code/game', terminalPids: [500] }, all).map((p) => p.port), [5173, 3110, 3140]);
+  assert.deepEqual(sessionPorts(ports, { path: '/code/game-2', terminalPids: [] }, all).map((p) => p.port), [3120]);
+
+  assert.ok(mentions('"node" C:\\Users\\Me\\Code\\Game\\client\\node_modules\\vite\\bin\\vite.js', 'C:/Users/me/code/game', 'win32'));
+  assert.ok(mentions('node --import file:///C:/Users/me/code/game/x.mjs', 'C:/Users/me/code/game', 'win32'));
+  assert.ok(mentions('serve "C:\\Users\\me\\code\\game"', 'C:/Users/me/code/game', 'win32'));
+  assert.ok(!mentions('node C:\\Users\\me\\code\\game-2\\x.js', 'C:/Users/me/code/game', 'win32'));
+  assert.ok(!mentions('node /srv/code/game/x.js', '/code/game', 'linux'));
 });

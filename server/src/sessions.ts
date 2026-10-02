@@ -42,10 +42,26 @@ interface WorktreeRef {
 
 const inside = (dir: string, root: string) => dir === root || dir.startsWith(root + path.sep);
 
+/** Whether a command line mentions this folder or something in it, however its slashes go. */
+export function mentions(commandLine: string, root: string, platform = process.platform): boolean {
+  const norm = (s: string) => (platform === 'win32' ? s.replaceAll('\\', '/').toLowerCase() : s);
+  const text = norm(commandLine);
+  const dir = norm(root).replace(/\/+$/, '');
+  if (!dir) return false;
+  for (let i = text.indexOf(dir); i !== -1; i = text.indexOf(dir, i + 1)) {
+    const before = text[i - 1];
+    const after = text[i + dir.length];
+    if ((before === undefined || ` "'=/`.includes(before)) && (after === undefined || ` "'/`.includes(after))) return true;
+  }
+  return false;
+}
+
 /**
  * The listening ports that belong to a session: those whose process runs inside its worktree (the
  * deepest worktree, when they nest), or else that one of its terminals started, however deep down.
- * Working directories aren't available on Windows, and a server may run outside its worktree.
+ * Working directories aren't available on Windows, so there a process runs where the paths in its
+ * command line are (node_modules\.bin\vite in a client folder): a server the agent started in the
+ * background has often lost its way back to the terminal by then.
  */
 export function sessionPorts(
   ports: ListeningProcess[],
@@ -55,7 +71,8 @@ export function sessionPorts(
   const pids = new Set(session.terminalPids);
   return ports
     .filter((p) => {
-      const home = p.cwd === null ? undefined : allPaths.filter((root) => inside(p.cwd!, root)).sort((a, b) => b.length - a.length)[0];
+      const homes = allPaths.filter((root) => (p.cwd === null ? mentions(p.commandLine, root) : inside(p.cwd, root)));
+      const home = homes.sort((a, b) => b.length - a.length)[0];
       if (home !== undefined) return home === session.path;
       return pids.has(p.pid) || p.ancestors.some((a) => pids.has(a));
     })
