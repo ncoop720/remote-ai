@@ -112,7 +112,7 @@ Describe a project's dev servers in `.remote-ai.json` at the repo root:
 
 Output goes to `~/.remote-ai/logs/<session>/<name>.log` and streams to the Logs panel, where you can pick lines and paste them into Claude's prompt. Claude is told about the servers, their ports and log files (via `--append-system-prompt`), and how to restart them, so it reads the logs instead of starting its own copies.
 
-The Preview panel shows the ports a session's processes listen on: those running inside its worktree, or started from its terminals (found with `ss` on Linux, `lsof` on macOS, `netstat` on Windows). On the computer itself it shows each port directly (`http://127.0.0.1:<port>`). Other devices see them through the address they reached remote-ai on, so dev servers that only listen on localhost work too, and nothing needs `--host`:
+The Preview panel shows the ports a session's processes listen on: those running inside its worktree, or started from its terminals (found with `ss` on Linux, `lsof` on macOS, `netstat` on Windows). On the computer itself it shows each port directly (`http://localhost:<port>`, which reaches servers listening on either 127.0.0.1 or ::1). Other devices see them through the address they reached remote-ai on, so dev servers that only listen on localhost work too, and nothing needs `--host`:
 
 - **Tailscale**: each port is served on the same port of the tailnet device, over https (`https://remote-ai-<computer>.<tailnet>.ts.net:3100`), so previews show inside the https dashboard.
 - **Wi-Fi**: port P is served on P + 10000 (`http://<computer>:13100` for 3100).

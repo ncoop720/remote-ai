@@ -275,8 +275,14 @@ function usePreviewAccess(): PreviewAccess | undefined {
   return access;
 }
 
+const LOOPBACK = new Set(['localhost', '127.0.0.1', '[::1]']);
+
 export function previewUrl(access: PreviewAccess, port: number, path: string): string {
-  return access ? `${access.scheme}://${access.host}:${port + access.offset}${path}` : `http://${location.hostname}:${port}${path}`;
+  if (access) return `${access.scheme}://${access.host}:${port + access.offset}${path}`;
+  // The desktop app opens the dashboard on 127.0.0.1, but dev servers may listen on ::1 only (Vite on
+  // recent Node), and sites register localhost as their origin (Google sign-in), so use localhost.
+  const host = LOOPBACK.has(location.hostname) ? 'localhost' : location.hostname;
+  return `http://${host}:${port}${path}`;
 }
 
 /** The session's web pages: its dev servers, by port. */
