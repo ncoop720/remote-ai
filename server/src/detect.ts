@@ -18,7 +18,7 @@ interface Pkg {
 }
 
 const DEV_SCRIPTS = ['dev', 'develop', 'start:dev', 'serve', 'start'];
-/** Folders that often hold one app each, backends first (they start first). */
+/** Folders that often hold one app each, by these names or longer ones (client-threejs), backends first (they start first). */
 const APP_FOLDERS = ['server', 'backend', 'api', 'client', 'frontend', 'web', 'app'];
 
 const exists = (...p: string[]) => fs.existsSync(path.join(...p));
@@ -106,6 +106,26 @@ function nodeApp(root: string, rel: string): NodeApp | null {
   return { rel, pm: managerOf(dir, root), script, framework: framework(pkg, String(pkg.scripts![script])) };
 }
 
+/** Top-level folders named for an app, server/ or game-server/, client/ or client-threejs/: backends first. */
+function appFolders(root: string): string[] {
+  let names: string[];
+  try {
+    names = fs
+      .readdirSync(root, { withFileTypes: true })
+      .filter((d) => d.isDirectory() && !d.name.startsWith('.'))
+      .map((d) => d.name);
+  } catch {
+    return [];
+  }
+  const rank = (name: string) => {
+    const words = name.toLowerCase().split(/[-_.]/);
+    return APP_FOLDERS.findIndex((f) => words.includes(f));
+  };
+  return names
+    .filter((n) => rank(n) !== -1)
+    .sort((a, b) => rank(a) - rank(b) || a.length - b.length || a.localeCompare(b));
+}
+
 function isWorkspaceRoot(root: string, pkg: Pkg | null): boolean {
   return Boolean(pkg?.workspaces) || exists(root, 'pnpm-workspace.yaml');
 }
@@ -127,7 +147,7 @@ function detectNode(root: string): ProjectConfig | null {
 
   // No dev script at the root: apps in their own folders (server/ and client/, or apps/*).
   const folders = [
-    ...APP_FOLDERS,
+    ...appFolders(root),
     ...['apps', 'packages'].flatMap((parent) => {
       try {
         return fs

@@ -55,6 +55,18 @@ test('apps in their own folders: one server each, backends first, each installin
   );
 });
 
+test('app folders with longer names, still backends first', () => {
+  assert.deepEqual(
+    summary({
+      'client-threejs/package.json': { scripts: { dev: 'vite' } },
+      'game-server/package.json': { scripts: { start: 'tsx watch src/index.ts' } },
+      'shared/types.ts': '',
+      'node_modules/x/package.json': { scripts: { dev: 'x' } },
+    })?.servers,
+    ['game-server (game-server): npm run start', 'client-threejs (client-threejs): npm run dev -- --port $PORT --strictPort'],
+  );
+});
+
 test('a workspace monorepo installs once at the root', () => {
   const c = summary({
     'package.json': { workspaces: ['apps/*'] },
