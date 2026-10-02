@@ -16,7 +16,7 @@ This guide covers the desktop app. For running remote-ai as a server on a headle
 
 ## Install
 
-Download the installer for your computer from the [releases page](https://github.com/ncoop720/remote-ai/releases). The repository is private for now, so sign in to GitHub with an account that has access to it.
+Download the installer for your computer from the [releases page](https://github.com/ncoop720/remote-ai/releases).
 
 | System | File | Notes |
 |---|---|---|
@@ -182,7 +182,9 @@ remote-ai lives in the tray (the menu bar on macOS). Closing the window keeps it
 
 ### Updates
 
-While the repository is private, remote-ai can't download its own updates (that would need a GitHub login inside the app), so **Check for updates** says there's no release to update from. To update, download the new installer from the [releases page](https://github.com/ncoop720/remote-ai/releases) and install it over the old one. Your sessions keep running through the update, and your projects, paired devices and settings stay.
+remote-ai checks for a new version when it starts and every few hours, and downloads it in the background. When it's ready, the tray and the bottom of the sidebar say **Restart to update**; otherwise the update installs the next time you quit. **Check for updates** checks right away. Your sessions keep running through the update, and your projects, paired devices and settings stay.
+
+Two installs can't update themselves: on macOS, because the app isn't signed yet, and on Linux, the `.deb`. For those, download the new installer from the [releases page](https://github.com/ncoop720/remote-ai/releases) and install it over the old one.
 
 ## Settings and files
 
