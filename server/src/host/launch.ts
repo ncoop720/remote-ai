@@ -4,7 +4,8 @@ import type { TermSpec } from './protocol.js';
 
 export interface Launch {
   file: string;
-  args: string[];
+  /** A string is a Windows command line, passed on exactly as it is. */
+  args: string[] | string;
   env: Record<string, string>;
 }
 
@@ -88,6 +89,33 @@ export function expandVars(command: string, vars: Record<string, string>): strin
   });
 }
 
+/**
+ * Split off the `NAME=value` assignments a POSIX command may start with, which cmd.exe would try
+ * to run as a program, so they can go in the environment instead. Values may be quoted; our
+ * variables are filled in as elsewhere, except inside single quotes.
+ */
+export function leadingAssignments(command: string, vars: Record<string, string>): { env: Record<string, string>; rest: string } {
+  const env: Record<string, string> = {};
+  const assignment = /^\s*([A-Za-z_][A-Za-z0-9_]*)=((?:'[^']*'|"(?:[^"\\]|\\.)*"|[^\s'";&|<>()])*)(?:\s+|$)/;
+  let rest = command;
+  for (let m = assignment.exec(rest); m; m = assignment.exec(rest)) {
+    env[m[1]!] = m[2]!.replace(/'([^']*)'|"((?:[^"\\]|\\.)*)"|[^'"]+/g, (part, single, double) =>
+      single !== undefined ? single : expandVars(double !== undefined ? double.replace(/\\(["\\$`])/g, '$1') : part, vars),
+    );
+    rest = rest.slice(m[0].length);
+  }
+  return { env, rest };
+}
+
+/**
+ * The command line that has cmd.exe run a command as written: with /s it strips the outer quotes
+ * and leaves the rest alone. (Given an array, node-pty would escape inner quotes as \", which
+ * cmd.exe doesn't understand.)
+ */
+function cmdLine(command: string): string {
+  return `/d /s /c "${command}"`;
+}
+
 /** Quote one argument for cmd.exe /s /c "...". */
 function cmdQuote(arg: string): string {
   return /^[A-Za-z0-9_\-./:=@\\]+$/.test(arg) ? arg : `"${arg.replace(/"/g, '""')}"`;
@@ -98,7 +126,8 @@ export function resolveLaunch(spec: TermSpec, base: Record<string, string>, plat
   const env = { ...base, ...spec.env };
   if (spec.command !== undefined) {
     if (platform === 'win32') {
-      return { file: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', expandVars(spec.command, spec.env ?? {})], env };
+      const assigned = leadingAssignments(spec.command, spec.env ?? {});
+      return { file: env.ComSpec || 'cmd.exe', args: cmdLine(expandVars(assigned.rest, spec.env ?? {})), env: { ...env, ...assigned.env } };
     }
     return { file: env.SHELL || '/bin/sh', args: ['-c', spec.command], env };
   }
@@ -109,7 +138,7 @@ export function resolveLaunch(spec: TermSpec, base: Record<string, string>, plat
   if (!file) throw new Error(`${program} is not installed or not on PATH`);
   // Batch files (npm's shims, for one) only run through cmd.exe.
   if (platform === 'win32' && /\.(cmd|bat)$/i.test(file)) {
-    return { file: env.ComSpec || 'cmd.exe', args: ['/d', '/s', '/c', `"${[file, ...args].map(cmdQuote).join(' ')}"`], env };
+    return { file: env.ComSpec || 'cmd.exe', args: cmdLine([file, ...args].map(cmdQuote).join(' ')), env };
   }
   return { file, args, env };
 }

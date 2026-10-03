@@ -3,7 +3,7 @@
   "servers": [
     {
       "name": "api",
-      "command": "REMOTE_AI_PORT=$PORT REMOTE_AI_DATA_DIR=$HOME/.remote-ai-dev/$PORT REMOTE_AI_WORKTREES_DIR=$HOME/.remote-ai-dev/$PORT/worktrees REMOTE_AI_TMUX_SOCKET=remote-ai-dev-$PORT npm run dev:server"
+      "command": "REMOTE_AI_PORT=$PORT REMOTE_AI_DATA_DIR=~/.remote-ai-dev/$PORT REMOTE_AI_WORKTREES_DIR=~/.remote-ai-dev/$PORT/worktrees npm run dev:server"
     },
     {
       "name": "web",

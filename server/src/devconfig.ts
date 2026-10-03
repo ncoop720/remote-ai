@@ -106,7 +106,7 @@ export function setupRequest(current: ProjectConfig, platform: string): string {
     '- Server names are lowercase letters, digits and dashes.',
     '- Each server gets its own port in $PORT; make its command listen on it (many dev servers need a flag such as --port $PORT). Every command also gets $PORT_<NAME> for every server (e.g. $PORT_API), so a frontend can find its backend.',
     '- List backends before the frontends that use them; servers start in that order.',
-    `- Commands run in the user's shell on ${OS_NAME[platform] ?? platform}; $PORT and $PORT_<NAME> work on every OS.`,
+    `- Commands run in the user's shell on ${OS_NAME[platform] ?? platform}; $PORT and $PORT_<NAME> work on every OS, and so does setting variables with a leading NAME=value.`,
     "- Use the project's own scripts and package manager. Include only servers needed for development, and services such as databases only if the project expects them to be started locally.",
     '',
     guess,
