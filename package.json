@@ -1,6 +1,6 @@
 {
   "name": "remote-ai",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "private": true,
   "description": "Self-hosted web dashboard for Claude Code sessions: one tmux session per git worktree, usable from desktop or phone.",
   "type": "module",
