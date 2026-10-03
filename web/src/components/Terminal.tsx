@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { FitAddon } from '@xterm/addon-fit';
 import { WebLinksAddon } from '@xterm/addon-web-links';
+import { ArrowDown } from './icons';
 
 const FONT = '"JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace';
 
@@ -29,12 +30,87 @@ const THEME = {
   brightWhite: '#FFFFFF',
 };
 
+// The session host keeps this much and sends all of it on attach (server/src/host/term.ts).
+const SCROLLBACK = 5000;
+
 type ConnState = 'connecting' | 'open' | 'reconnecting' | 'not-running' | 'exited';
+
+/**
+ * Scroll the terminal by dragging a finger, carrying on after a flick. xterm 6 scrolls only with
+ * the mouse wheel, so without this a phone can't reach the scrollback. Taps still focus the terminal.
+ */
+function touchScroll(el: HTMLElement, term: XTerm): () => void {
+  let lastY = 0;
+  let lastT = 0;
+  let velocity = 0; // px/ms, positive when the finger moves up (towards later lines)
+  let carry = 0; // dragged pixels not yet a whole line
+  let lineHeight = 1;
+  let dragging = false;
+  let frame = 0;
+
+  // Returns false once the viewport can't move any further that way.
+  const scrollBy = (px: number): boolean => {
+    carry += px;
+    const lines = Math.trunc(carry / lineHeight);
+    if (!lines) return true;
+    carry -= lines * lineHeight;
+    const before = term.buffer.active.viewportY;
+    term.scrollLines(lines);
+    return term.buffer.active.viewportY !== before;
+  };
+
+  const onStart = (e: TouchEvent) => {
+    cancelAnimationFrame(frame);
+    dragging = false;
+    if (e.touches.length !== 1) return;
+    lastY = e.touches[0]!.clientY;
+    lastT = e.timeStamp;
+    velocity = 0;
+    carry = 0;
+    lineHeight = (el.querySelector('.xterm-screen')?.clientHeight ?? term.rows) / term.rows;
+  };
+  const onMove = (e: TouchEvent) => {
+    if (e.touches.length !== 1) return;
+    const y = e.touches[0]!.clientY;
+    const dy = lastY - y;
+    if (!dragging && Math.abs(dy) < 8) return; // still a tap
+    dragging = true;
+    e.preventDefault();
+    velocity = 0.8 * (dy / Math.max(1, e.timeStamp - lastT)) + 0.2 * velocity;
+    lastY = y;
+    lastT = e.timeStamp;
+    scrollBy(dy);
+  };
+  const onEnd = (e: TouchEvent) => {
+    if (!dragging || e.timeStamp - lastT > 100) return; // the finger stopped before lifting
+    let v = velocity;
+    let t = performance.now();
+    const step = (now: number) => {
+      const dt = now - t;
+      t = now;
+      v *= 0.998 ** dt; // about the rate a native scroll view slows down
+      if (Math.abs(v) > 0.02 && scrollBy(v * dt)) frame = requestAnimationFrame(step);
+    };
+    frame = requestAnimationFrame(step);
+  };
+
+  el.addEventListener('touchstart', onStart, { passive: true });
+  el.addEventListener('touchmove', onMove, { passive: false });
+  el.addEventListener('touchend', onEnd, { passive: true });
+  return () => {
+    cancelAnimationFrame(frame);
+    el.removeEventListener('touchstart', onStart);
+    el.removeEventListener('touchmove', onMove);
+    el.removeEventListener('touchend', onEnd);
+  };
+}
 
 /** A live view of one of a session's terminals (the agent's by default), reconnecting on its own after network drops. */
 export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: string; name?: string; fontSize: number }) {
   const host = useRef<HTMLDivElement>(null);
+  const termRef = useRef<XTerm | null>(null);
   const [conn, setConn] = useState<ConnState>('connecting');
+  const [scrolledUp, setScrolledUp] = useState(false);
 
   useEffect(() => {
     const el = host.current;
@@ -50,8 +126,10 @@ export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: s
       lineHeight: 1.15,
       theme: THEME,
       cursorBlink: true,
+      scrollback: SCROLLBACK,
       allowProposedApi: false,
     });
+    termRef.current = term;
     const fit = new FitAddon();
     term.loadAddon(fit);
     term.loadAddon(new WebLinksAddon());
@@ -84,6 +162,10 @@ export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: s
 
     const onData = term.onData((d) => send({ t: 'i', d }));
     const onResize = term.onResize(({ cols, rows }) => send({ t: 'r', c: cols, r: rows }));
+    const checkScroll = () => setScrolledUp(term.buffer.active.viewportY < term.buffer.active.baseY);
+    const onScroll = term.onScroll(checkScroll);
+    const onWrite = term.onWriteParsed(checkScroll);
+    let stopTouch: (() => void) | undefined;
     const observer = new ResizeObserver(() => {
       if (el.clientWidth > 0 && el.clientHeight > 0) fit.fit();
     });
@@ -95,6 +177,7 @@ export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: s
       .then(() => {
         if (disposed) return;
         term.open(el);
+        stopTouch = touchScroll(el, term);
         fit.fit();
         observer.observe(el);
         connect();
@@ -104,16 +187,26 @@ export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: s
       disposed = true;
       clearTimeout(retryTimer);
       observer.disconnect();
+      stopTouch?.();
       onData.dispose();
       onResize.dispose();
+      onScroll.dispose();
+      onWrite.dispose();
       ws?.close();
       term.dispose();
+      termRef.current = null;
+      setScrolledUp(false);
     };
   }, [sessionId, name, fontSize]);
 
   return (
     <div className="terminal-wrap">
       <div className="terminal" ref={host} />
+      {scrolledUp && (
+        <button type="button" className="terminal-bottom" aria-label="Scroll to the latest output" onClick={() => termRef.current?.scrollToBottom()}>
+          <ArrowDown size={18} />
+        </button>
+      )}
       {conn === 'reconnecting' && <div className="terminal-banner">Reconnecting…</div>}
       {conn === 'not-running' && <div className="terminal-banner">This session isn't running.</div>}
       {conn === 'exited' && <div className="terminal-banner">The program has exited.</div>}
