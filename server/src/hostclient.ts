@@ -288,12 +288,13 @@ export class HostClient extends EventEmitter {
   async attach(
     ref: TermRef,
     size: { cols?: number; rows?: number },
-    on: { data(data: string): void; exit(code: number | null): void; close(): void },
+    on: { data(data: string): void; resize(cols: number, rows: number): void; exit(code: number | null): void; close(): void },
   ): Promise<Attachment | null> {
     await this.connection(); // makes sure the host is running
     const { conn } = await Connection.open(this.socket, this.token);
     conn.on('event', (ev: HostEvent) => {
       if (ev.ev === 'data') on.data(ev.data);
+      else if (ev.ev === 'resize') on.resize(ev.cols, ev.rows);
       else if (ev.ev === 'exit') on.exit(ev.code);
     });
     conn.on('close', () => on.close());

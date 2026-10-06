@@ -420,6 +420,13 @@ button:disabled {
   color: var(--muted);
   font-size: 12px;
 }
+.terminal-fit {
+  border: 1px solid var(--line-strong);
+  color: var(--text-2);
+}
+.terminal-fit:hover {
+  color: var(--text);
+}
 
 .prompt-card {
   flex-shrink: 0;

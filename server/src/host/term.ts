@@ -15,6 +15,8 @@ const SCROLLBACK = 5000;
 
 export interface TermListener {
   data(data: string): void;
+  /** Another viewer resized the terminal. */
+  resize(cols: number, rows: number): void;
   exit(code: number | null): void;
 }
 
@@ -35,6 +37,9 @@ export class Term {
   lastOutputAt = 0;
   bells = 0;
 
+  /** The program's size. The screen catches up once it has taken the output that came before. */
+  private cols: number;
+  private rows: number;
   private readonly pty: pty.IPty;
   private readonly screen: InstanceType<typeof Screen>;
   private readonly serializer = new SerializeAddon();
@@ -48,8 +53,8 @@ export class Term {
     launch: Launch,
     opts: { cwd: string; cols?: number; rows?: number; logFile?: string; onExit?: (code: number | null) => void },
   ) {
-    const cols = clampSize(opts.cols, 120);
-    const rows = clampSize(opts.rows, 40);
+    const cols = (this.cols = clampSize(opts.cols, 120));
+    const rows = (this.rows = clampSize(opts.rows, 40));
     this.screen = new Screen({ cols, rows, scrollback: SCROLLBACK, allowProposedApi: true });
     this.screen.loadAddon(this.serializer);
     this.screen.onBell(() => this.bells++);
@@ -135,12 +140,19 @@ export class Term {
     this.write(pasteSequence(text, this.screen.modes.bracketedPasteMode));
   }
 
-  resize(cols: unknown, rows: unknown): void {
-    const c = clampSize(cols, this.screen.cols);
-    const r = clampSize(rows, this.screen.rows);
-    if (c === this.screen.cols && r === this.screen.rows) return;
-    this.screen.resize(c, r);
+  /** Resize the program, and have every viewer but the one asking (`by`) draw at the new size. */
+  resize(cols: unknown, rows: unknown, by?: TermListener): void {
+    const c = clampSize(cols, this.cols);
+    const r = clampSize(rows, this.rows);
+    if (c === this.cols && r === this.rows) return;
+    this.cols = c;
+    this.rows = r;
     if (this.alive) this.pty.resize(c, r);
+    // Output already on its way was drawn for the old size, so the change waits behind it.
+    this.screen.write('', () => {
+      this.screen.resize(c, r);
+      for (const l of this.listeners) if (l !== by) l.resize(c, r);
+    });
   }
 
   /** Resolves once the screen has processed everything received so far. */
@@ -164,7 +176,7 @@ export class Term {
     await this.settled();
     const snapshot = this.serializer.serialize({ scrollback: SCROLLBACK });
     if (this.alive) this.listeners.add(listener);
-    return { snapshot, alive: this.alive, exitCode: this.exitCode };
+    return { snapshot, cols: this.screen.cols, rows: this.screen.rows, alive: this.alive, exitCode: this.exitCode };
   }
 
   detach(listener: TermListener): void {

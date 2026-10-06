@@ -117,7 +117,7 @@ function handleConnection(socket: net.Socket): void {
         return getTerm(req).screenText();
       case 'resize':
         checkRef(req);
-        getTerm(req).resize(req.cols, req.rows);
+        getTerm(req).resize(req.cols, req.rows, attached.get(keyOf(req)));
         return undefined;
       case 'kill':
         checkRef(req);
@@ -148,6 +148,7 @@ function handleConnection(socket: net.Socket): void {
         if (prev) term.detach(prev);
         const listener: TermListener = {
           data: (data) => writeLine(socket, { ev: 'data', session: req.session, name: req.name, data }),
+          resize: (cols, rows) => writeLine(socket, { ev: 'resize', session: req.session, name: req.name, cols, rows }),
           exit: (code) => writeLine(socket, { ev: 'exit', session: req.session, name: req.name, code }),
         };
         attached.set(key, listener);

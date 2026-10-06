@@ -74,12 +74,17 @@ export interface HelloResult {
 export interface AttachResult {
   /** Escape sequences that redraw the screen and scrollback as they are now. */
   snapshot: string;
+  /** The size the snapshot is drawn for. Older hosts leave it out. */
+  cols?: number;
+  rows?: number;
   alive: boolean;
   exitCode: number | null;
 }
 
 export type HostEvent =
   | ({ ev: 'data'; data: string } & TermRef)
+  /** To a terminal's other viewers when one of them resizes it. */
+  | ({ ev: 'resize'; cols: number; rows: number } & TermRef)
   | ({ ev: 'exit'; code: number | null } & TermRef)
   | ({ ev: 'spawn' } & TermRef);
 

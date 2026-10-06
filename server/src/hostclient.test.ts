@@ -27,7 +27,8 @@ before(() => {
 
 after(async () => {
   await host.shutdown().catch(() => undefined);
-  fs.rmSync(dataDir, { recursive: true, force: true });
+  // On Windows the host holds the directory until it has exited.
+  await fs.promises.rm(dataDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
 });
 
 test('runs a command, takes input, and reports its exit', { skip: !posix }, async () => {
@@ -74,6 +75,36 @@ test('a viewer gets a snapshot and then live output', { skip: !posix }, async ()
   assert.deepEqual((await host.list()).filter((t) => t.session === ref.session), []);
   view.close();
   assert.equal(exited, false, 'a removed terminal is not reported as exited');
+});
+
+test("viewers learn the terminal's size, and of each other's resizes", async () => {
+  const ref = { session: 'proj__sizes', name: 'agent' };
+  await host.spawn({ ...ref, cwd: dataDir, argv: [process.execPath, '-e', 'setInterval(() => {}, 1000)'], cols: 80, rows: 24 });
+  const viewer = (sizes: string[]) => ({
+    data: () => undefined,
+    resize: (c: number, r: number) => sizes.push(`${c}x${r}`),
+    exit: () => undefined,
+    close: () => undefined,
+  });
+
+  const a: string[] = [];
+  const b: string[] = [];
+  const viewA = await host.attach(ref, {}, viewer(a));
+  assert.deepEqual([viewA?.cols, viewA?.rows], [80, 24]);
+  const viewB = await host.attach(ref, { cols: 100, rows: 30 }, viewer(b));
+  assert.deepEqual([viewB?.cols, viewB?.rows], [100, 30]);
+  await until(async () => a.length === 1);
+
+  viewB!.resize(90, 20);
+  await until(async () => a.length === 2);
+  viewA!.resize(70, 25);
+  await until(async () => b.length === 1);
+  assert.deepEqual(a, ['100x30', '90x20']);
+  assert.deepEqual(b, ['70x25'], 'a viewer is not told of its own resize');
+
+  viewA!.close();
+  viewB!.close();
+  await host.killSession(ref.session);
 });
 
 test('a new client finds terminals started by an earlier one', { skip: !posix }, async () => {
