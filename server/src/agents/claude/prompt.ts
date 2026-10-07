@@ -5,6 +5,7 @@ import type { PromptOption, VisiblePrompt } from '../../../../shared/types.js';
 const SELECTED = /^([\s│┃|]*)(?:❯|>(?=\s+\d\.\s))\s+(\S.*)$/;
 const ONLY_BORDER = /^[\s│┃|]*$/;
 const NUMBERED_LABEL = /^(\d)\.\s+(.+)$/;
+const RULE = /^\s*[─━]{3,}/;
 
 function clean(text: string): string {
   return text.replace(/[\s│┃|╭╮╰╯─]+$/, '').replace(/^[\s│┃|╭╮╰╯─]+/, '').trim();
@@ -40,6 +41,8 @@ export function parseVisiblePrompt(screen: string, bottomLines = 30): VisiblePro
   while (start > 0 && inBlock(start - 1)) start--;
   let end = sel;
   while (end < lines.length - 1 && inBlock(end + 1)) end++;
+  // Claude's input box: what's typed sits between two rules, and its lines line up like options.
+  if (RULE.test(lines[start - 1] ?? '') && RULE.test(lines[end + 1] ?? '')) return null;
 
   const raw: { label: string; selected: boolean }[] = [];
   for (let i = start; i <= end; i++) {

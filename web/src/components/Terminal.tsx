@@ -230,6 +230,14 @@ export function Terminal({ sessionId, name = 'agent', fontSize }: { sessionId: s
       };
     };
 
+    // Shift+Enter (or Ctrl+Enter) starts a new line in Claude's prompt: send what Claude's
+    // /terminal-setup binds it to, Meta+Enter. xterm alone sends a plain Enter, which submits.
+    term.attachCustomKeyEventHandler((e) => {
+      if (e.key !== 'Enter' || !(e.shiftKey || e.ctrlKey) || e.altKey || e.metaKey || e.isComposing) return true;
+      if (e.type === 'keydown') send({ t: 'i', d: '\x1b\r' });
+      e.preventDefault();
+      return false;
+    });
     const onData = term.onData((d) => send({ t: 'i', d }));
     const checkScroll = () => setScrolledUp(term.buffer.active.viewportY < term.buffer.active.baseY);
     const onScroll = term.onScroll(checkScroll);

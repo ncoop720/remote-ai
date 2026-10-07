@@ -74,6 +74,11 @@ test('option descriptions on the following lines are skipped', () => {
 test('ordinary numbered lists and a typed input line are not prompts', () => {
   assert.equal(parseVisiblePrompt(['Here is the plan:', '1. Add the route', '2. Write tests', '', '> '].join('\n')), null);
   assert.equal(parseVisiblePrompt(['─────────────', '❯ fix the login bug', '─────────────', '  ? for shortcuts'].join('\n')), null);
+  // several lines typed with Shift+Enter line up like a menu's options
+  assert.equal(
+    parseVisiblePrompt(['─────────────', '❯ first line', '  second line', '  third line', '─────────────', '  ⏸ manual mode on'].join('\n')),
+    null,
+  );
 });
 
 test('prompts that scrolled far above the bottom are ignored', () => {

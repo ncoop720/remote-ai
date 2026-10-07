@@ -9,6 +9,8 @@ const KEYS: { label: string; key: string; aria?: string }[] = [
   { label: 'Tab', key: 'Tab' },
   { label: '↑', key: 'Up', aria: 'Up arrow' },
   { label: '↓', key: 'Down', aria: 'Down arrow' },
+  { label: '←', key: 'Left', aria: 'Left arrow' },
+  { label: '→', key: 'Right', aria: 'Right arrow' },
   { label: '⏎', key: 'Enter', aria: 'Enter' },
 ];
 
