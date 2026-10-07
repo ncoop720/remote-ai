@@ -82,10 +82,10 @@ Sessions don't depend on the window or the app being open: they run in a backgro
 
 A session has these views. On a computer, the left side switches between **Terminal** and **Chat**, and **Preview & logs** opens a column on the right. On a phone they're tabs: **Chat**, **Terminal**, **Logs** and **Preview**.
 
-- **Terminal** is Claude Code itself, live. Type into it as you would in your own terminal. Any number of browsers can watch the same session.
+- **Terminal** is Claude Code itself, live. Type into it as you would in your own terminal; **Shift+Enter** (or **Ctrl+Enter**) starts a new line. Any number of browsers can watch the same session.
 - **Chat** shows the conversation as messages: your prompts, Claude's replies, and each tool Claude used as a row you can tap to see what it ran and what came back. Type at the bottom to send a message. While Claude is working, **Interrupt** stops its current turn (like pressing Esc) without ending the session.
 - **Questions and approvals.** When Claude shows a menu (permission to run a command, a question, the folder-trust check on a new worktree), it appears as buttons under the conversation. Tap one to answer.
-- **Phone keys.** The Terminal tab on a phone has a key bar for keys phones lack: **Esc**, **^C**, **⇧Tab** (switches Claude's mode), **Tab**, **↑**, **↓** and **⏎**.
+- **Phone keys.** The Terminal tab on a phone has a key bar for keys phones lack: **Esc**, **^C**, **⇧Tab** (switches Claude's mode), **Tab**, **↑**, **↓**, **←**, **→** and **⏎**.
 
 ### Review changes
 
@@ -132,7 +132,7 @@ Claude is told which servers run where and where their logs are, so it reads the
 
 ### Preview
 
-The Preview panel shows the pages a session's servers serve: any port a process in that worktree listens on, or that the session started. Pick the port, type a path, and use **Open ↗** to open the page in its own tab. On a computer, the **Full** button switches to **Phone** width.
+The Preview panel shows the pages a session's servers serve: any port a process in that worktree listens on, or that the session started. Pick the port, type a path, and use **Open ↗** to open the page in its own tab. On a computer, the **Full** button switches to **Phone** width. **Stop** (■ on a phone) ends whatever listens on that port: a server from the Logs panel stops as it would there, and anything else, such as a server Claude started in the background, ends along with whatever it started.
 
 On your phone, previews come through remote-ai's own address, so they work even when the dev server only listens on the computer itself (you don't need Vite's `--host`), and hot reload works. Your phone has to be paired, and only the sessions' own ports are shown.
 
