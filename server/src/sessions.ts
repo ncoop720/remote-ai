@@ -139,7 +139,7 @@ export class SessionManager {
 
   /** Add a main checkout anywhere on this computer as a project. */
   async addProject(input: string): Promise<string> {
-    const repo = typeof input === 'string' && input.trim() ? path.resolve(expandHome(input.trim())) : '';
+    const repo = typeof input === 'string' && input.trim() ? git.canonicalPath(path.resolve(expandHome(input.trim()))) : '';
     if (!repo || !fs.existsSync(repo) || !fs.statSync(repo).isDirectory()) throw new HttpError(400, 'Choose an existing folder');
     if (!isMainCheckout(repo)) {
       if (fs.existsSync(path.join(repo, '.git'))) throw new HttpError(400, "That folder is a git worktree; add the repository's main checkout instead");
@@ -278,11 +278,12 @@ export class SessionManager {
 
   /** Map a hook's cwd to the session whose worktree contains it (longest path wins). */
   async resolveByCwd(cwd: string): Promise<string | null> {
+    const dir = git.canonicalPath(cwd);
     const match = () => {
       let best: WorktreeRef | null = null;
       for (const ref of this.index) {
         const root = ref.worktree.path;
-        if ((cwd === root || cwd.startsWith(root + path.sep)) && root.length > (best?.worktree.path.length ?? -1)) {
+        if ((dir === root || dir.startsWith(root + path.sep)) && root.length > (best?.worktree.path.length ?? -1)) {
           best = ref;
         }
       }
@@ -325,10 +326,12 @@ export class SessionManager {
     let created = false;
     if (!wtPath) {
       const base = req.base?.trim() || worktrees[0]?.branch || 'HEAD';
-      wtPath = path.join(this.cfg.worktreesDir, slug(project.name), slug(branch));
+      wtPath = git.canonicalPath(path.join(this.cfg.worktreesDir, slug(project.name), slug(branch)));
       if (fs.existsSync(wtPath)) throw new HttpError(409, `${wtPath} already exists`);
       fs.mkdirSync(path.dirname(wtPath), { recursive: true });
       await git.addWorktree(project.path, wtPath, branch, base);
+      // Lookups go by the path git lists, which it resolves (true case, symlinks followed).
+      wtPath = (await git.listWorktrees(project.path)).find((w) => w.branch === branch)?.path ?? wtPath;
       await git.copyWorktreeIncludes(project.path, wtPath);
       this.state.setBase(wtPath, base);
       created = true;

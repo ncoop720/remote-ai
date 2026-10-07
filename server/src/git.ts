@@ -12,15 +12,25 @@ export interface Worktree {
   prunable: boolean;
 }
 
+/**
+ * The one spelling of a path, for everything that keys on it (ports, bases, agents, setup markers)
+ * or passes it on. On Windows git prints C:/Users/me/..., where path.join and the agent's hooks
+ * give C:\Users\me\...; both become the latter.
+ */
+export function canonicalPath(p: string, platform = process.platform): string {
+  if (platform !== 'win32') return p;
+  return path.win32.normalize(p).replace(/^[a-z]:/, (drive) => drive.toUpperCase());
+}
+
 /** Parse `git worktree list --porcelain`. The first entry is the main checkout. */
-export function parseWorktrees(porcelain: string): Worktree[] {
+export function parseWorktrees(porcelain: string, platform = process.platform): Worktree[] {
   const result: Worktree[] = [];
   for (const block of porcelain.split(/\n\s*\n/)) {
     const lines = block.split('\n').filter((l) => l.length > 0);
     const first = lines[0];
     if (!first?.startsWith('worktree ')) continue;
     const wt: Worktree = {
-      path: first.slice('worktree '.length),
+      path: canonicalPath(first.slice('worktree '.length), platform),
       head: null,
       branch: null,
       bare: false,

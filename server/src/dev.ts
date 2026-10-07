@@ -39,11 +39,27 @@ export class DevManager {
     private readonly cfg: Config,
     private readonly host: HostClient,
     private readonly state: StateStore,
-  ) {}
+  ) {
+    this.migrateMarkers(state.worktreePaths());
+  }
 
   private marker(worktreePath: string, kind: 'done' | 'failed'): string {
     const key = crypto.createHash('sha1').update(worktreePath).digest('hex').slice(0, 16);
     return path.join(this.cfg.dataDir, 'setup', `${key}.${kind}`);
+  }
+
+  /**
+   * Markers from before paths had one spelling are keyed by the path as git prints it (C:/Users/...
+   * on Windows): move them to the path's one spelling.
+   */
+  migrateMarkers(worktreePaths: string[], platform = process.platform): void {
+    if (platform !== 'win32') return;
+    const kinds = ['done', 'failed'] as const;
+    for (const p of worktreePaths) {
+      const old = p.replaceAll('\\', '/');
+      if (old === p || kinds.some((k) => fs.existsSync(this.marker(p, k)))) continue;
+      for (const k of kinds) if (fs.existsSync(this.marker(old, k))) fs.renameSync(this.marker(old, k), this.marker(p, k));
+    }
   }
 
   /** Ports assigned to each server: consecutive numbers in the worktree's block. */

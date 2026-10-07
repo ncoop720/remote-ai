@@ -56,6 +56,26 @@ test('info reports running servers and setup state from terminals and markers', 
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
+test("setup markers kept under the spelling git prints move to the path's one spelling", () => {
+  const { dev, config, dataDir } = setup();
+  const walk = 'C:\\w\\game\\walk';
+  const old = { id: 'game__walk', path: 'C:/w/game/walk' };
+  dev.info(old, config, [term('setup', false, 1)]); // recorded by an earlier version
+  dev.migrateMarkers([walk], 'linux');
+  assert.equal(dev.info({ ...old, path: walk }, config, []).setup, 'pending', 'only Windows has two spellings');
+
+  dev.migrateMarkers([walk], 'win32');
+  assert.equal(dev.info({ ...old, path: walk }, config, []).setup, 'failed');
+  assert.equal(dev.info(old, config, []).setup, 'pending');
+
+  // A path that already has a marker keeps its own.
+  dev.info(old, config, [term('setup', false, 1)]);
+  dev.info({ ...old, path: walk }, config, [term('setup', false, 0)]);
+  dev.migrateMarkers([walk], 'win32');
+  assert.equal(dev.info({ ...old, path: walk }, config, []).setup, 'done');
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
 test('setup commands each start from the worktree root', () => {
   assert.equal(setupCommand(['npm ci', 'npm run build'], '/w/my app', 'linux'), "npm ci && cd '/w/my app' && npm run build");
   assert.equal(setupCommand(['npm ci', 'npm run build'], 'C:\\w\\app', 'win32'), 'npm ci && cd /d "C:\\w\\app" && npm run build');

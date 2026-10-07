@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
-import { copyWorktreeIncludes, parseWorktrees, worktreeIncludeFiles } from './git.js';
+import { canonicalPath, copyWorktreeIncludes, parseWorktrees, worktreeIncludeFiles } from './git.js';
 
 test('worktree includes: untracked matches are copied, tracked files and non-matches are not', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-git-'));
@@ -60,7 +60,7 @@ test('parseWorktrees reads main checkout, branches and detached heads', () => {
     '',
   ].join('\n');
 
-  const wts = parseWorktrees(out);
+  const wts = parseWorktrees(out, 'linux');
   assert.equal(wts.length, 4);
   assert.deepEqual(wts[0], {
     path: '/home/me/projects/myapp',
@@ -87,6 +87,15 @@ test('clone URLs and project names', async () => {
   assert.match(validateClone('--upload-pack=evil', 'x') ?? '', /https/);
   assert.match(validateClone('https://github.com/a/b.git', '../escape') ?? '', /Project names/);
   assert.match(validateClone('https://github.com/a/b.git', '.hidden') ?? '', /Project names/);
+});
+
+test("on Windows, a worktree's path is spelled the same whether git printed it or path.join built it", () => {
+  const out = 'worktree C:/Users/me/worktrees/game/walk\nHEAD 1111111111111111111111111111111111111111\nbranch refs/heads/walk\n';
+  const joined = path.win32.join('C:\\Users\\me\\worktrees', 'game', 'walk');
+  assert.equal(parseWorktrees(out, 'win32')[0]?.path, joined);
+  assert.equal(canonicalPath(joined, 'win32'), joined);
+  assert.equal(canonicalPath('c:/Users/me/worktrees/game/walk', 'win32'), joined, 'and whatever case the drive letter has');
+  assert.equal(canonicalPath('/home/me/worktrees/game/walk', 'linux'), '/home/me/worktrees/game/walk');
 });
 
 test('parseWorktrees handles empty output', () => {

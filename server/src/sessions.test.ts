@@ -9,7 +9,7 @@ import { claudeAdapter } from './agents/claude/index.js';
 import type { Config } from './config.js';
 import { DevManager } from './dev.js';
 import type { HostClient } from './hostclient.js';
-import type { TermInfo } from './host/protocol.js';
+import type { TermInfo, TermSpec } from './host/protocol.js';
 import { mentions, SessionManager, sessionPorts } from './sessions.js';
 import { StateStore } from './state.js';
 import { StatusStore } from './status.js';
@@ -21,16 +21,17 @@ function repo(dir: string): string {
   return dir;
 }
 
-function setup(projectsDir: string | null, terms: TermInfo[] = []) {
+/** `spawned` collects what the host was asked to start. */
+function setup(projectsDir: string | null, terms: TermInfo[] = [], spawned: TermSpec[] = []) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-sessions-'));
   const dataDir = path.join(root, 'data');
   fs.mkdirSync(dataDir);
   const cfg = { dataDir, projectsDir, worktreesDir: path.join(root, 'worktrees'), port: 8787, portBase: 3100, portStep: 10 } as Config;
-  const host = { list: async () => terms } as unknown as HostClient;
+  const host = { list: async () => terms, spawn: async (spec: TermSpec) => void spawned.push(spec) } as unknown as HostClient;
   const state = new StateStore(dataDir, 3100, 10);
   const agents = new AgentRegistry([claudeAdapter({ command: 'claude', settingsPath: '/s.json' })]);
   const sessions = new SessionManager(cfg, host, state, new StatusStore(), agents, new DevManager(cfg, host, state));
-  return { root, sessions };
+  return { root, dataDir, sessions };
 }
 
 test('projects are the folders added plus the main checkouts in the projects folder', async () => {
@@ -82,6 +83,38 @@ test('removing a project needs its sessions stopped, and leaves folder projects 
   repo(path.join(scanned, 'api'));
   const { sessions: withFolder } = setup(scanned);
   await assert.rejects(withFolder.removeProject('api'), /can't be removed here/);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("a new session's worktree has one spelling, so its agent is told the ports its dev servers get", async () => {
+  const spawned: TermSpec[] = [];
+  const { root, dataDir, sessions } = setup(null, [], spawned);
+  const game = repo(path.join(root, 'game'));
+  const servers = [{ name: 'api', command: 'npm start' }, { name: 'web', command: 'npm run dev' }];
+  fs.writeFileSync(path.join(game, '.remote-ai.json'), JSON.stringify({ servers }));
+  execFileSync('git', ['add', '.'], { cwd: game });
+  execFileSync('git', ['-c', 'user.email=t@t', '-c', 'user.name=t', 'commit', '-q', '-m', 'servers'], { cwd: game });
+  await sessions.addProject(game);
+
+  const id = await sessions.createSession('game', { branch: 'walk' });
+  const agent = spawned.find((s) => s.name === 'agent')!;
+  const prompt = agent.argv![agent.argv!.indexOf('--append-system-prompt') + 1] ?? '';
+  assert.equal(agent.env?.PORT, '3100');
+  assert.match(prompt, /- api: `npm start`, port 3100,/);
+  assert.match(prompt, /- web: `npm run dev`, port 3101,/);
+
+  const session = (await sessions.listProjects()).flatMap((p) => p.sessions).find((s) => s.id === id);
+  assert.equal(session?.path, agent.cwd, 'the path git lists is the one the agent started in');
+  assert.equal(session?.port, 3100);
+  assert.equal(session?.base, 'main');
+  assert.deepEqual(session?.dev.servers.map((s) => s.port), [3100, 3101]);
+  await sessions.devAction(id, 'start');
+  assert.deepEqual(spawned.filter((s) => s.name.startsWith('dev-')).map((s) => [s.name, s.env?.PORT]), [['dev-api', '3100'], ['dev-web', '3101']]);
+  assert.deepEqual(Object.keys((JSON.parse(fs.readFileSync(path.join(dataDir, 'state.json'), 'utf8')) as { ports: object }).ports), [agent.cwd]);
+
+  // Hooks report the agent's working directory however the agent spells it.
+  assert.equal(await sessions.resolveByCwd(path.join(agent.cwd, 'src')), id);
+  assert.equal(await sessions.resolveByCwd(path.join(agent.cwd, 'src').replaceAll('\\', '/')), id);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

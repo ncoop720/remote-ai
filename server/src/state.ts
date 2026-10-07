@@ -1,7 +1,8 @@
 import fs from 'node:fs';
 import path from 'node:path';
+import { canonicalPath } from './git.js';
 
-interface StateData {
+export interface StateData {
   /** Dev-server port block assigned to each worktree path. */
   ports: Record<string, number>;
   /** Branch each worktree was created from, used for "commits ahead". */
@@ -10,6 +11,31 @@ interface StateData {
   agents: Record<string, string>;
   /** Main checkouts added as projects, wherever they are. */
   projects: string[];
+}
+
+/**
+ * Give every path its one spelling. Before paths had one, creating a Windows session stored its
+ * worktree as path.join spells it (C:\Users\...) and everything after as git prints it
+ * (C:/Users/...). All lookups went by git's, so where a path has both, git's entry is the one in
+ * use (its dev servers run on that port block) and the other is dropped.
+ */
+export function oneSpelling(data: StateData, platform = process.platform): StateData {
+  const byPath = <T>(entries: Record<string, T>): Record<string, T> => {
+    const result: Record<string, T> = {};
+    for (const [p, value] of Object.entries(entries)) {
+      const key = canonicalPath(p, platform);
+      const fromGit = !p.includes('\\');
+      if (!Object.hasOwn(result, key) || fromGit) result[key] = value;
+    }
+    return result;
+  };
+  return {
+    ...data,
+    ports: byPath(data.ports),
+    bases: byPath(data.bases),
+    agents: byPath(data.agents),
+    projects: [...new Set(data.projects.map((p) => canonicalPath(p, platform)))],
+  };
 }
 
 /** Small JSON file for facts that must outlive the session host (whose terminals end on reboot). */
@@ -23,9 +49,11 @@ export class StateStore {
     private readonly portStep: number,
   ) {
     this.file = path.join(dataDir, 'state.json');
-    this.data = fs.existsSync(this.file)
+    const stored: StateData = fs.existsSync(this.file)
       ? { ports: {}, bases: {}, agents: {}, projects: [], ...(JSON.parse(fs.readFileSync(this.file, 'utf8')) as Partial<StateData>) }
       : { ports: {}, bases: {}, agents: {}, projects: [] };
+    this.data = oneSpelling(stored);
+    if (JSON.stringify(this.data) !== JSON.stringify(stored)) this.save();
   }
 
   private save(): void {
@@ -81,6 +109,11 @@ export class StateStore {
   removeProject(repoPath: string): void {
     this.data.projects = this.data.projects.filter((p) => p !== repoPath);
     this.save();
+  }
+
+  /** Every worktree the state has something on. */
+  worktreePaths(): string[] {
+    return [...new Set([...Object.keys(this.data.ports), ...Object.keys(this.data.bases), ...Object.keys(this.data.agents)])];
   }
 
   forget(worktreePath: string): void {
