@@ -4,14 +4,14 @@ import path from 'node:path';
 import * as git from './git.js';
 import type { Worktree } from './git.js';
 import type { AgentAdapter, AgentRegistry } from './agents/index.js';
-import type { DevManager } from './dev.js';
+import { devTerminal, type DevManager } from './dev.js';
 import { loadProjectConfig, setupRequest } from './devconfig.js';
 import { HttpError } from './errors.js';
 import { expandHome, type Config } from './config.js';
 import { sessionId, slug } from './ids.js';
 import type { HostClient } from './hostclient.js';
 import type { TermInfo, TermRef } from './host/protocol.js';
-import { listeningPorts, type ListeningProcess } from './ports.js';
+import { listeningPorts, listeningSockets, stopProcessTree, type ListeningProcess } from './ports.js';
 import type { SessionLabel } from './push.js';
 import { diffBase, diffStat, worktreeDiff } from './diff.js';
 import type { StateStore } from './state.js';
@@ -62,10 +62,11 @@ export function mentions(commandLine: string, root: string, platform = process.p
  * Working directories aren't available on Windows, so there a process runs where the paths in its
  * command line are (node_modules\.bin\vite in a client folder): a server the agent started in the
  * background has often lost its way back to the terminal by then.
+ * `servers` maps the pids of the session's dev-server terminals to their servers' names.
  */
 export function sessionPorts(
   ports: ListeningProcess[],
-  session: { path: string; terminalPids: number[] },
+  session: { path: string; terminalPids: number[]; servers?: Map<number, string> },
   allPaths: string[],
 ): ListeningPort[] {
   const pids = new Set(session.terminalPids);
@@ -76,7 +77,12 @@ export function sessionPorts(
       if (home !== undefined) return home === session.path;
       return pids.has(p.pid) || p.ancestors.some((a) => pids.has(a));
     })
-    .map(({ port, pid, command }) => ({ port, pid, command }));
+    .map(({ port, pid, command, ancestors }) => ({
+      port,
+      pid,
+      command,
+      server: [pid, ...ancestors].map((p) => session.servers?.get(p)).find((s) => s !== undefined) ?? null,
+    }));
 }
 
 /** A main git checkout: worktrees have a `.git` file, not a directory. */
@@ -209,6 +215,12 @@ export class SessionManager {
             const sessionTerms = termsBySession.get(id) ?? [];
             const isRunning = sessionTerms.some((t) => t.name === AGENT_TERMINAL && t.alive);
             const config = loadProjectConfig(wt.path, p.path);
+            const alive = sessionTerms.filter((t) => t.alive);
+            const servers = new Map<number, string>();
+            for (const s of config.servers) {
+              const term = alive.find((t) => t.name === devTerminal(s.name));
+              if (term) servers.set(term.pid, s.name);
+            }
             return {
               id,
               agent: this.agentFor(wt.path).id,
@@ -224,7 +236,7 @@ export class SessionManager {
               base,
               status: isRunning ? this.statuses.get(id) : { state: 'stopped', updatedAt: 0 },
               dev: this.dev.info({ id, path: wt.path }, config, sessionTerms),
-              ports: sessionPorts(candidates, { path: wt.path, terminalPids: sessionTerms.filter((t) => t.alive).map((t) => t.pid) }, allPaths),
+              ports: sessionPorts(candidates, { path: wt.path, terminalPids: alive.map((t) => t.pid), servers }, allPaths),
               changes,
               title: this.agentFor(wt.path).transcript?.title?.(this.transcriptFile(wt.path, id)) ?? null,
             };
@@ -389,6 +401,24 @@ export class SessionManager {
       default:
         throw new HttpError(400, `Unknown action ${String(action)}`);
     }
+    this.invalidate();
+  }
+
+  /**
+   * Stop whatever listens on one of the session's ports: the dev server, when one of its terminals
+   * runs it, else the process and everything it started (one the agent ran in the background, or
+   * one that outlived its terminal).
+   */
+  async stopPort(id: string, port: number): Promise<void> {
+    const ref = await this.find(id);
+    this.invalidate();
+    const session = (await this.listProjects()).flatMap((p) => p.sessions).find((s) => s.id === id);
+    const listener = session?.ports.find((p) => p.port === port);
+    if (!listener) throw new HttpError(404, `Nothing in this session is listening on port ${port}`);
+    if (listener.server) {
+      await this.dev.stop({ id, path: ref.worktree.path }, loadProjectConfig(ref.worktree.path, ref.projectPath), listener.server);
+    }
+    if ((await listeningSockets()).some((s) => s.pid === listener.pid)) await stopProcessTree(listener.pid);
     this.invalidate();
   }
 

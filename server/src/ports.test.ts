@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ancestorsOf, parseLsof, parseLsofCwd, parseNetstat, parsePs, parseSs, parseWindowsProcesses } from './ports.js';
+import { ancestorsOf, parseLsof, parseLsofCwd, parseNetstat, parsePs, parseSs, parseWindowsProcesses, processTree } from './ports.js';
 
 test('parseSs reads ports and pids, skipping system ports and duplicates', () => {
   const out = [
@@ -62,4 +62,12 @@ test('Windows: netstat LISTENING lines and the process list', () => {
 
 test('ancestor walks stop at loops', () => {
   assert.deepEqual(ancestorsOf(3, (p) => ({ 3: 2, 2: 3 })[p]), [2, 3]);
+});
+
+test('a process tree is the process and everything under it, and nothing else', () => {
+  // pid -> parent: 10 started 11 and 12, 12 started 13; 20 is a sibling of 10; 30 loops onto itself
+  const parents = new Map([[10, 1], [11, 10], [12, 10], [13, 12], [20, 1], [30, 30]]);
+  assert.deepEqual(processTree(10, parents), [10, 11, 12, 13]);
+  assert.deepEqual(processTree(13, parents), [13]);
+  assert.deepEqual(processTree(30, parents), [30]);
 });

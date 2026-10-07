@@ -59,6 +59,8 @@ export interface ListeningPort {
   port: number;
   pid: number;
   command: string;
+  /** The configured dev server whose terminal runs it, if one does. */
+  server: string | null;
 }
 
 export interface SessionInfo {

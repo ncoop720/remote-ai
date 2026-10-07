@@ -418,6 +418,13 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     },
   );
 
+  // Stop what a preview shows, whether or not remote-ai started it.
+  app.post<{ Params: { id: string; port: string } }>('/api/sessions/:id/ports/:port/stop', async (req) => {
+    await sessions.stopPort(req.params.id, Number(req.params.port));
+    hub.broadcast({ type: 'sessions' });
+    return { ok: true };
+  });
+
   app.get<{ Params: { id: string } }>('/api/sessions/:id/diff', async (req) => sessions.diff(req.params.id));
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id/chat', async (req, reply) => {

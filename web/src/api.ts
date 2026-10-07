@@ -51,6 +51,8 @@ export const api = {
   answer: (id: string, key: string) => request<void>('POST', `${session(id)}/answer`, { key }),
   dev: (id: string, action: DevAction, name?: string) =>
     request<void>('POST', `${session(id)}/dev/${action}${name ? `?name=${encodeURIComponent(name)}` : ''}`),
+  /** Stop whatever in the session listens on a port: its dev server, or the process itself. */
+  stopPort: (id: string, port: number) => request<void>('POST', `${session(id)}/ports/${port}/stop`),
   /** Set up with Claude: the agent writes .remote-ai.json; it starts if it wasn't running. */
   configureDev: (id: string) => request<{ started: boolean }>('POST', `${session(id)}/dev/configure`),
   logsUrl: (id: string, name: string) => `${session(id)}/logs/${encodeURIComponent(name)}`,

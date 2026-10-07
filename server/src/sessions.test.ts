@@ -104,6 +104,16 @@ test('ports go to the worktree their process runs in, or else the session whose 
   assert.deepEqual(sessionPorts(ports, { path: '/w/app/main', terminalPids: [] }, all), []);
 });
 
+test("a port names the dev server whose terminal runs it, so stopping it stops that server", () => {
+  const proc = (port: number, ancestors: number[]) => ({ port, pid: port, command: 'node', commandLine: 'node', cwd: '/w/app', ancestors });
+  const ports = [proc(3100, [700, 600, 1]), proc(3101, [800, 1]), proc(5173, [900, 500, 1])];
+  const servers = new Map([[600, 'api'], [800, 'web']]); // dev-server terminals; 500 is the agent's
+  assert.deepEqual(
+    sessionPorts(ports, { path: '/w/app', terminalPids: [500, 600, 800], servers }, ['/w/app']).map((p) => [p.port, p.server]),
+    [[3100, 'api'], [3101, 'web'], [5173, null]],
+  );
+});
+
 test('without a working directory, a port goes to the worktree its command line runs from', () => {
   const proc = (port: number, commandLine: string, ancestors: number[] = []) => ({ port, pid: port, command: 'node.exe', commandLine, cwd: null, ancestors });
   // git lists worktrees with forward slashes; Windows command lines use backslashes and any case

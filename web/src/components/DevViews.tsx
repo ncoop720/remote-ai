@@ -294,6 +294,8 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
   const [draft, setDraft] = useState('/');
   const [reload, setReload] = useState(0);
   const [narrow, setNarrow] = useState(false);
+  const [stopping, setStopping] = useState(false);
+  const [stopError, setStopError] = useState<string | null>(null);
 
   // Default to the last configured server that is listening (configs list backends before the
   // frontend that talks to them), then to any listening port.
@@ -313,6 +315,18 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
 
   if (access === undefined) return <div className="preview-empty muted">Loading…</div>;
   const url = previewUrl(access, current, path);
+  const server = ports.find((p) => p.port === current)?.server;
+  const stop = async () => {
+    setStopping(true);
+    setStopError(null);
+    try {
+      await api.stopPort(session.id, current);
+    } catch (err) {
+      setStopError(errorMessage(err));
+    } finally {
+      setStopping(false);
+    }
+  };
   // An https page can't show an http one: only when reached through a proxy remote-ai doesn't run.
   const blocked = url.startsWith('http:') && location.protocol === 'https:';
   return (
@@ -325,7 +339,14 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
           setReload((n) => n + 1);
         }}
       >
-        <select aria-label="Port" value={current} onChange={(e) => setPort(Number(e.target.value))}>
+        <select
+          aria-label="Port"
+          value={current}
+          onChange={(e) => {
+            setPort(Number(e.target.value));
+            setStopError(null);
+          }}
+        >
           {ports.map((p) => (
             <option key={p.port} value={p.port}>
               :{p.port} {p.command.split(' ').slice(0, 2).join(' ')}
@@ -344,7 +365,20 @@ export function PreviewView({ session, isDesktop }: { session: SessionInfo; isDe
         <a className="btn btn-small" href={url} target="_blank" rel="noreferrer">
           Open ↗
         </a>
+        <button
+          type="button"
+          className="btn btn-small"
+          disabled={stopping}
+          aria-label={`Stop ${server ? `the ${server} server` : `what's listening on port ${current}`}`}
+          title={`Stop ${server ? `the ${server} server` : `what's listening on :${current}`}`}
+          onClick={() => void stop()}
+        >
+          {/* Phones show just the icon, so the port stays readable */}
+          <Stop size={12} />
+          {isDesktop && 'Stop'}
+        </button>
       </form>
+      {stopError && <p className="error preview-error">{stopError}</p>}
       {blocked ? (
         <div className="preview-empty">
           <p>Browsers don't show http pages inside an https page.</p>

@@ -1071,6 +1071,10 @@ button:disabled {
   max-width: 45%;
   font-family: var(--mono);
 }
+.preview-error {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+}
 .preview-frame-wrap {
   flex-grow: 1;
   min-height: 0;

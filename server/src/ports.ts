@@ -131,6 +131,47 @@ export function ancestorsOf(pid: number, parentOf: (pid: number) => number | und
   return chain;
 }
 
+/** A process and everything it started, parents before their children. */
+export function processTree(pid: number, parents: Map<number, number>): number[] {
+  const tree = [pid];
+  for (let i = 0; i < tree.length; i++) {
+    for (const [child, parent] of parents) if (parent === tree[i] && !tree.includes(child)) tree.push(child);
+  }
+  return tree;
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return (err as NodeJS.ErrnoException).code === 'EPERM';
+  }
+};
+
+/** End a process and everything it started: politely, then by force if it's still there after a few seconds. */
+export async function stopProcessTree(pid: number): Promise<void> {
+  if (process.platform === 'win32') {
+    // A console program without its console can only be ended by force. Fails if it already exited.
+    await run('taskkill', ['/PID', String(pid), '/T', '/F']).catch(() => undefined);
+    return;
+  }
+  const ps = await run('ps', ['-A', '-o', 'pid=,ppid=,command=']).then(parsePs, () => new Map<number, { ppid: number }>());
+  const tree = processTree(pid, new Map([...ps].map(([p, { ppid }]) => [p, ppid])));
+  const signal = (pids: number[], sig: NodeJS.Signals) => {
+    for (const p of pids) {
+      try {
+        process.kill(p, sig);
+      } catch {
+        // already gone
+      }
+    }
+  };
+  signal(tree, 'SIGTERM');
+  for (let i = 0; i < 30 && tree.some(alive); i++) await new Promise((r) => setTimeout(r, 100));
+  signal(tree.filter(alive), 'SIGKILL');
+}
+
 function shorten(command: string): string {
   return command
     .split(' ')
