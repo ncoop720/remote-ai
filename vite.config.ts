@@ -15,7 +15,8 @@ export default defineConfig({
   server: {
     port: 5173,
     proxy: {
-      '/api': backend,
+      // Keep the browser's Host header: the server refuses requests whose Origin doesn't match it.
+      '/api': { target: backend, changeOrigin: false },
       '/ws': { target: backend, ws: true },
     },
   },
