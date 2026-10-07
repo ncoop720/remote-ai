@@ -111,7 +111,7 @@ You can also write the file yourself, at the root of the repository (committed, 
 
 ```json
 {
-  "setup": ["npm ci --prefix server", "npm ci --prefix client"],
+  "setup": ["cd server && npm ci", "cd client && npm ci"],
   "servers": [
     { "name": "server", "cwd": "server", "command": "npm start" },
     { "name": "client", "cwd": "client", "command": "npm run dev -- --port $PORT" }

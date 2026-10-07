@@ -59,18 +59,14 @@ function managerOf(dir: string, root: string): Manager {
   return 'npm';
 }
 
+/**
+ * An app in a folder installs from inside it (each setup command starts from the root). Pointed
+ * there from the root instead (npm --prefix), npm sets INIT_CWD to the root, and install steps that
+ * look there, such as Prisma generating its client, don't find the app's files.
+ */
 function installCommand(pm: Manager, rel: string, locked: boolean): string {
-  const at = (flag: string) => (rel ? ` ${flag} ${rel}` : '');
-  switch (pm) {
-    case 'pnpm':
-      return `pnpm install${locked ? ' --frozen-lockfile' : ''}${at('--dir')}`;
-    case 'yarn':
-      return `yarn${at('--cwd')} install${locked ? ' --frozen-lockfile' : ''}`;
-    case 'bun':
-      return `bun install${locked ? ' --frozen-lockfile' : ''}${at('--cwd')}`;
-    default:
-      return `npm ${locked ? 'ci' : 'install'}${at('--prefix')}`;
-  }
+  const install = pm === 'npm' ? `npm ${locked ? 'ci' : 'install'}` : `${pm} install${locked ? ' --frozen-lockfile' : ''}`;
+  return rel ? `cd ${rel} && ${install}` : install;
 }
 
 function runCommand(pm: Manager, script: string, args: string): string {

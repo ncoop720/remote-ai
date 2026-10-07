@@ -49,9 +49,18 @@ test('apps in their own folders: one server each, backends first, each installin
     }),
     {
       detected: '2 Node and Vite apps with npm',
-      setup: ['npm ci --prefix server', 'npm ci --prefix client'],
+      // From inside each folder: run from the root, npm's INIT_CWD is the root and Prisma's install looks there.
+      setup: ['cd server && npm ci', 'cd client && npm ci'],
       servers: ['server (server): npm run dev', 'client (client): npm run dev -- --port $PORT --strictPort'],
     },
+  );
+  assert.deepEqual(
+    summary({
+      'api/package.json': { scripts: { dev: 'tsx watch src/index.ts' } },
+      'api/yarn.lock': '',
+      'web/package.json': { scripts: { dev: 'vite' } },
+    })?.setup,
+    ['cd api && yarn install --frozen-lockfile', 'cd web && npm install'],
   );
 });
 
