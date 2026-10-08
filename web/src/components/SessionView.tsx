@@ -210,9 +210,14 @@ export function SessionView({ session, isDesktop, onChanged }: {
             <div className="pane" hidden={leftView !== 'terminal'}>
               <Terminal key={session.id} sessionId={session.id} fontSize={13} />
             </div>
-            {leftView === 'chat' && <ChatView session={session} />}
-            <PromptCard session={session} />
-            {leftView === 'chat' && <Composer sessionId={session.id} working={working} submitOnEnter />}
+            {/* The menu buttons are for Chat; in Terminal, menus are answered in the terminal itself. */}
+            {leftView === 'chat' && (
+              <>
+                <ChatView session={session} />
+                <PromptCard session={session} />
+                <Composer sessionId={session.id} working={working} submitOnEnter />
+              </>
+            )}
           </div>
           {showDev && <DevPanel session={session} />}
         </div>
@@ -239,7 +244,6 @@ export function SessionView({ session, isDesktop, onChanged }: {
           {/* The terminal stays mounted so switching tabs doesn't drop its connection. */}
           <div className="session-body" hidden={tab !== 'terminal'}>
             <Terminal key={session.id} sessionId={session.id} fontSize={12} />
-            <PromptCard session={session} />
             <MobileControls sessionId={session.id} />
           </div>
           {tab === 'logs' && (

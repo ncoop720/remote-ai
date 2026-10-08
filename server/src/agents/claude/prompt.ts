@@ -3,6 +3,8 @@ import type { PromptOption, VisiblePrompt } from '../../../../shared/types.js';
 // The highlighted choice in a Claude Code menu: "❯ Yes", "❯ 1. Yes", or "> 1. Yes" in older versions,
 // optionally inside a box border.
 const SELECTED = /^([\s│┃|]*)(?:❯|>(?=\s+\d\.\s))\s+(\S.*)$/;
+// Claude's input box with nothing typed in it.
+const EMPTY_INPUT = /^[\s│┃|]*[❯>][\s│┃|]*$/;
 const ONLY_BORDER = /^[\s│┃|]*$/;
 const NUMBERED_LABEL = /^(\d)\.\s+(.+)$/;
 const RULE = /^\s*[─━]{3,}/;
@@ -15,6 +17,8 @@ function clean(text: string): string {
  * Find the menu Claude Code is showing (permission prompts, the folder-trust prompt, questions),
  * reading only the bottom of the screen so old scrollback can't match. Options are the lines
  * aligned with the highlighted one; deeper-indented lines under an option are its description.
+ * A menu takes the input box's place, so once the input box shows, what's above is scrollback
+ * (your sent messages start with ❯ and their lines line up like options).
  */
 export function parseVisiblePrompt(screen: string, bottomLines = 30): VisiblePrompt | null {
   const lines = screen.replace(/\s+$/, '').split('\n').slice(-bottomLines);
@@ -22,6 +26,7 @@ export function parseVisiblePrompt(screen: string, bottomLines = 30): VisiblePro
   let sel = -1;
   let match: RegExpExecArray | null = null;
   for (let i = lines.length - 1; i >= 0; i--) {
+    if (EMPTY_INPUT.test(lines[i] ?? '')) return null;
     match = SELECTED.exec(lines[i] ?? '');
     if (match) {
       sel = i;

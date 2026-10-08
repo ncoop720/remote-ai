@@ -84,7 +84,7 @@ A session has these views. On a computer, the left side switches between **Termi
 
 - **Terminal** is Claude Code itself, live. Type into it as you would in your own terminal; **Shift+Enter** (or **Ctrl+Enter**) starts a new line. Any number of browsers can watch the same session.
 - **Chat** shows the conversation as messages: your prompts, Claude's replies, and each tool Claude used as a row you can tap to see what it ran and what came back. Type at the bottom to send a message. While Claude is working, **Interrupt** stops its current turn (like pressing Esc) without ending the session.
-- **Questions and approvals.** When Claude shows a menu (permission to run a command, a question, the folder-trust check on a new worktree), it appears as buttons under the conversation. Tap one to answer.
+- **Questions and approvals.** When Claude shows a menu (permission to run a command, a question, the folder-trust check on a new worktree), it appears as buttons under the conversation in **Chat**. Tap one to answer. In **Terminal**, answer in the terminal itself.
 - **Phone keys.** The Terminal tab on a phone has a key bar for keys phones lack: **Esc**, **^C**, **⇧Tab** (switches Claude's mode), **Tab**, **↑**, **↓**, **←**, **→** and **⏎**.
 
 ### Review changes

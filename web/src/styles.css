@@ -430,6 +430,8 @@ button:disabled {
 
 .prompt-card {
   flex-shrink: 0;
+  max-height: 50%;
+  overflow-y: auto;
   border: 1px solid #5a4629;
   border-radius: 14px;
   background: var(--panel);

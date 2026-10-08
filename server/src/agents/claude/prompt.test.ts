@@ -81,6 +81,27 @@ test('ordinary numbered lists and a typed input line are not prompts', () => {
   );
 });
 
+test('a sent message above the empty input box is not a prompt', () => {
+  const screen = [
+    '● Tell me which of these you want and I can fill in the',
+    '  defaults on the page so Phase 1 can start.',
+    '',
+    '❯ Answer to questions from the artifact:',
+    '  • Weapon 2 does nothing right now',
+    '  • Yes, weapons and armor can roll different combinations of stats. Other items will',
+    '  never differ',
+    '  • Gear cannot change in combat. Rearranging inventory and drinking potions is fine',
+    '',
+    '✻ Cogitating… (12s · esc to interrupt)',
+    '',
+    '─────────────',
+    '❯ ',
+    '─────────────',
+    '  ⏵⏵ auto mode on (shift+tab to cycle)',
+  ].join('\n');
+  assert.equal(parseVisiblePrompt(screen), null);
+});
+
 test('prompts that scrolled far above the bottom are ignored', () => {
   const old = ['Do you want to proceed?', '❯ 1. Yes', '  2. No'];
   const filler = Array.from({ length: 40 }, (_, i) => `line ${i}`);
