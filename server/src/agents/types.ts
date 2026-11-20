@@ -45,6 +45,11 @@ export interface AgentAdapter {
   };
   /** A menu the agent is showing (permission prompt, question), read from the visible screen. */
   parsePrompt?(screen: string): VisiblePrompt | null;
+  /**
+   * How many pasted images the visible screen shows. An agent reads a pasted image path in the
+   * background, so a new one here is how to know it has the image before more is typed after it.
+   */
+  pastedImages?(screen: string): number;
   /** The agent's own session log, read for the chat view. */
   transcript?: {
     find(cwd: string, reported: string | undefined): string | null;

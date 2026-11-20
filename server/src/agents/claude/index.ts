@@ -94,6 +94,9 @@ export function claudeAdapter(opts: { command: string; settingsPath: string }): 
 
     parsePrompt: parseVisiblePrompt,
 
+    // A pasted image path becomes "[Image #1]" in the prompt.
+    pastedImages: (screen) => screen.match(/\[Image #\d+\]/g)?.length ?? 0,
+
     transcript: { find: findTranscript, parse: parseTranscriptLine, title: readTitle },
   };
 }

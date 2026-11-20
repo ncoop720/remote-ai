@@ -57,6 +57,13 @@ export const Send = (p: P) => (
     <path d="m5 12 7-7 7 7" />
   </Icon>
 );
+export const Photo = (p: P) => (
+  <Icon {...p}>
+    <rect x="3" y="4" width="18" height="16" rx="3" />
+    <circle cx="9" cy="9.5" r="1.5" />
+    <path d="m21 15-4.5-4.5L7 20" />
+  </Icon>
+);
 export const Stop = (p: P) => (
   <Icon {...p}>
     <rect x="6" y="6" width="12" height="12" rx="2" />

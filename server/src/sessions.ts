@@ -16,6 +16,7 @@ import type { SessionLabel } from './push.js';
 import { diffBase, diffStat, worktreeDiff } from './diff.js';
 import type { StateStore } from './state.js';
 import type { StatusStore } from './status.js';
+import { Uploads } from './uploads.js';
 import type {
   ChatItem,
   CreateSessionRequest,
@@ -99,10 +100,15 @@ const ALLOWED_KEYS = new Set(['Escape', 'C-c', 'BTab', 'Tab', 'Up', 'Down', 'Lef
 /** The host terminal the session's agent runs in. */
 export const AGENT_TERMINAL = 'agent';
 const CACHE_MS = 1500;
+/** Images one message can carry. */
+const MAX_IMAGES = 10;
+
+const sleep = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
 
 export class SessionManager {
   private cache: { at: number; projects: ProjectInfo[] } | null = null;
   private index: WorktreeRef[] = [];
+  private readonly uploads: Uploads;
 
   constructor(
     private readonly cfg: Config,
@@ -111,7 +117,9 @@ export class SessionManager {
     private readonly statuses: StatusStore,
     private readonly agents: AgentRegistry,
     private readonly dev: DevManager,
-  ) {}
+  ) {
+    this.uploads = new Uploads(cfg.dataDir);
+  }
 
   invalidate(): void {
     this.cache = null;
@@ -561,15 +569,45 @@ export class SessionManager {
     await this.host.keys(this.agentTerm(id), keys);
   }
 
-  /** Paste text into the agent's input box, optionally pressing Enter to submit it. */
-  async sendText(id: string, text: string, submit: boolean): Promise<void> {
-    if (typeof text !== 'string' || text.length === 0) throw new HttpError(400, 'Text is required');
+  /** Save an image sent for a session; its path then goes to sendText. */
+  async saveImage(id: string, data: Buffer): Promise<string> {
+    await this.find(id);
+    return this.uploads.saveImage(data);
+  }
+
+  /**
+   * Paste text into the agent's input box, optionally pressing Enter to submit it. Images saved
+   * with saveImage go in first, each path pasted on its own, which is how the agent takes an image.
+   */
+  async sendText(id: string, text: string, submit: boolean, images: string[] = []): Promise<void> {
+    if (typeof text !== 'string') throw new HttpError(400, 'Text is required');
+    if (!Array.isArray(images) || !images.every((f) => typeof f === 'string' && this.uploads.has(f))) throw new HttpError(400, 'Unknown image');
+    if (images.length > MAX_IMAGES) throw new HttpError(400, `Send at most ${MAX_IMAGES} images at once`);
+    if (text.length === 0 && images.length === 0) throw new HttpError(400, 'Text is required');
+    const ref = await this.find(id);
     await this.requireRunning(id);
-    await this.host.paste(this.agentTerm(id), text);
+    for (const image of images) await this.pasteImage(ref, image);
+    if (text) await this.host.paste(this.agentTerm(id), images.length > 0 ? ` ${text}` : text);
     if (submit) {
       // Give the agent a moment to finish handling the paste before Enter arrives.
-      await new Promise((r) => setTimeout(r, 80));
+      await sleep(80);
       await this.host.keys(this.agentTerm(id), ['Enter']);
+    }
+  }
+
+  /** Paste an image's path, then wait until the agent has read it, so what comes next lands after it. */
+  private async pasteImage(ref: WorktreeRef, file: string): Promise<void> {
+    const term = this.agentTerm(ref.id);
+    const count = this.agentFor(ref.worktree.path).pastedImages;
+    if (!count) {
+      await this.host.paste(term, file);
+      return sleep(500);
+    }
+    const before = count(await this.host.screen(term));
+    await this.host.paste(term, file);
+    for (const deadline = Date.now() + 3000; Date.now() < deadline; ) {
+      await sleep(25);
+      if (count(await this.host.screen(term)) > before) return;
     }
   }
 

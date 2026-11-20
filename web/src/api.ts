@@ -17,11 +17,13 @@ import type {
 
 export type { UpdateResult, VersionInfo };
 
+/** A Blob body (an image, say) goes as it is; anything else as JSON. */
 async function request<T>(method: string, url: string, body?: unknown): Promise<T> {
+  const blob = body instanceof Blob;
   const res = await fetch(url, {
     method,
-    headers: body === undefined ? undefined : { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
+    headers: body === undefined ? undefined : { 'Content-Type': blob ? body.type : 'application/json' },
+    body: body === undefined ? undefined : blob ? body : JSON.stringify(body),
   });
   if (res.status === 401 && url !== '/api/login' && url !== '/api/pair') window.dispatchEvent(new Event('ra-login-required'));
   if (!res.ok) {
@@ -46,7 +48,10 @@ export const api = {
   stop: (id: string) => request<void>('POST', `${session(id)}/stop`),
   remove: (id: string, force = false) => request<void>('DELETE', `${session(id)}${force ? '?force=1' : ''}`),
   keys: (id: string, keys: string[]) => request<void>('POST', `${session(id)}/keys`, { keys }),
-  text: (id: string, text: string, submit = true) => request<void>('POST', `${session(id)}/text`, { text, submit }),
+  /** `images` are paths from uploadImage; they go into the message ahead of the text. */
+  text: (id: string, text: string, submit = true, images: string[] = []) =>
+    request<void>('POST', `${session(id)}/text`, { text, submit, images }),
+  uploadImage: (id: string, image: Blob) => request<{ path: string }>('POST', `${session(id)}/images`, image),
   prompt: (id: string) => request<{ prompt: VisiblePrompt | null }>('GET', `${session(id)}/prompt`),
   answer: (id: string, key: string) => request<void>('POST', `${session(id)}/answer`, { key }),
   dev: (id: string, action: DevAction, name?: string) =>

@@ -21,13 +21,13 @@ function repo(dir: string): string {
   return dir;
 }
 
-/** `spawned` collects what the host was asked to start. */
-function setup(projectsDir: string | null, terms: TermInfo[] = [], spawned: TermSpec[] = []) {
+/** `spawned` collects what the host was asked to start; `more` is the rest of the host a test uses. */
+function setup(projectsDir: string | null, terms: TermInfo[] = [], spawned: TermSpec[] = [], more: Partial<HostClient> = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ra-sessions-'));
   const dataDir = path.join(root, 'data');
   fs.mkdirSync(dataDir);
   const cfg = { dataDir, projectsDir, worktreesDir: path.join(root, 'worktrees'), port: 8787, portBase: 3100, portStep: 10 } as Config;
-  const host = { list: async () => terms, spawn: async (spec: TermSpec) => void spawned.push(spec) } as unknown as HostClient;
+  const host = { list: async () => terms, spawn: async (spec: TermSpec) => void spawned.push(spec), ...more } as unknown as HostClient;
   const state = new StateStore(dataDir, 3100, 10);
   const agents = new AgentRegistry([claudeAdapter({ command: 'claude', settingsPath: '/s.json' })]);
   const sessions = new SessionManager(cfg, host, state, new StatusStore(), agents, new DevManager(cfg, host, state));
@@ -115,6 +115,42 @@ test("a new session's worktree has one spelling, so its agent is told the ports 
   // Hooks report the agent's working directory however the agent spells it.
   assert.equal(await sessions.resolveByCwd(path.join(agent.cwd, 'src')), id);
   assert.equal(await sessions.resolveByCwd(path.join(agent.cwd, 'src').replaceAll('\\', '/')), id);
+  fs.rmSync(root, { recursive: true, force: true });
+});
+
+test("images go ahead of the text, each pasted once the agent has read the one before", async () => {
+  // Claude reads a pasted image path in the background, then shows it as [Image #n].
+  let screen = '❯ ';
+  const sent: string[] = [];
+  const terms = [{ session: 'game__main', name: 'agent', alive: true } as TermInfo];
+  const { root, dataDir, sessions } = setup(null, terms, [], {
+    screen: async () => screen,
+    paste: async (_ref, text) => {
+      sent.push(`paste ${text} | ${screen}`);
+      if (text.endsWith('.png')) setTimeout(() => (screen += `[Image #${screen.split('[').length}] `), 60);
+    },
+    keys: async (_ref, keys) => void sent.push(`keys ${keys.join(' ')}`),
+  });
+  await sessions.addProject(repo(path.join(root, 'game')));
+  const png = Buffer.from('\x89PNG\r\n\x1a\n....', 'latin1');
+  const first = await sessions.saveImage('game__main', png);
+  const second = await sessions.saveImage('game__main', png);
+  assert.equal(path.dirname(first), path.join(dataDir, 'uploads'));
+
+  await sessions.sendText('game__main', 'what are these?', true, [first, second]);
+  assert.deepEqual(sent, [
+    `paste ${first} | ❯ `,
+    `paste ${second} | ❯ [Image #1] `,
+    'paste  what are these? | ❯ [Image #1] [Image #2] ',
+    'keys Enter',
+  ]);
+
+  sent.length = 0;
+  await sessions.sendText('game__main', '', true, [first]);
+  assert.deepEqual(sent.map((s) => s.split(' | ')[0]), [`paste ${first}`, 'keys Enter'], 'images can go without text');
+  await assert.rejects(sessions.sendText('game__main', 'hi', true, [path.join(root, 'game', 'secret.png')]), /Unknown image/);
+  await assert.rejects(sessions.sendText('game__main', '', true), /Text is required/);
+  await assert.rejects(sessions.saveImage('game__main', Buffer.from('<svg/>')), /PNG, JPEG, GIF or WebP/);
   fs.rmSync(root, { recursive: true, force: true });
 });
 

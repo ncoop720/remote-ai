@@ -380,13 +380,20 @@ export async function startServer(opts: ServerOptions): Promise<RunningServer> {
     return { ok: true };
   });
 
-  app.post<{ Params: { id: string }; Body: { text: string; submit?: boolean } }>(
+  app.post<{ Params: { id: string }; Body: { text: string; submit?: boolean; images?: string[] } }>(
     '/api/sessions/:id/text',
     async (req) => {
-      await sessions.sendText(req.params.id, req.body?.text, req.body?.submit ?? true);
+      await sessions.sendText(req.params.id, req.body?.text, req.body?.submit ?? true, req.body?.images ?? []);
       return { ok: true };
     },
   );
+
+  // An image for the next message (a photo from a phone, say), sent as the body; its path goes back with /text.
+  app.addContentTypeParser(/^image\//, { parseAs: 'buffer', bodyLimit: 25 * 1024 * 1024 }, (_req, body, done) => done(null, body));
+  app.post<{ Params: { id: string }; Body: unknown }>('/api/sessions/:id/images', async (req) => {
+    if (!Buffer.isBuffer(req.body)) throw new HttpError(415, 'Send the image as the request body');
+    return { path: await sessions.saveImage(req.params.id, req.body) };
+  });
 
   app.get<{ Params: { id: string } }>('/api/sessions/:id/prompt', async (req) => ({
     prompt: await sessions.visiblePrompt(req.params.id),
