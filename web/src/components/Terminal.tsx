@@ -43,27 +43,60 @@ type ServerMessage = { t: 'size' | 'resize'; c: number; r: number };
 
 type ConnState = 'connecting' | 'open' | 'reconnecting' | 'not-running' | 'exited';
 
+// Programs that read the mouse scroll about this many lines a wheel notch (Claude Code's fullscreen renderer does).
+const LINES_PER_NOTCH = 3;
+
 /**
  * Scroll the terminal by dragging a finger, carrying on after a flick. xterm 6 scrolls only with
  * the mouse wheel, so without this a phone can't reach the scrollback. Taps still focus the terminal.
+ *
+ * A program that reads the mouse, or draws on the alternate screen (which has no scrollback), scrolls
+ * itself, as Claude Code's fullscreen renderer does. There a drag turns the wheel instead, which xterm
+ * passes on just as it does a mouse's: as wheel reports, or as arrow keys.
  */
 function touchScroll(el: HTMLElement, term: XTerm): () => void {
+  let lastX = 0;
   let lastY = 0;
   let lastT = 0;
   let velocity = 0; // px/ms, positive when the finger moves up (towards later lines)
-  let carry = 0; // dragged pixels not yet a whole line
+  let carry = 0; // dragged pixels not yet a whole step
   let lineHeight = 1;
+  let screen: Element | null = null;
   let dragging = false;
   let frame = 0;
 
+  /** One notch of the wheel under the finger. */
+  const wheel = (down: boolean) => {
+    if (!screen) return;
+    const r = screen.getBoundingClientRect();
+    screen.dispatchEvent(
+      new WheelEvent('wheel', {
+        deltaY: down ? 1 : -1,
+        deltaMode: WheelEvent.DOM_DELTA_LINE,
+        // Mouse reports carry the cell under the pointer, so keep it on the screen.
+        clientX: Math.min(Math.max(lastX, r.left), r.right - 1),
+        clientY: Math.min(Math.max(lastY, r.top), r.bottom - 1),
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  };
+
   // Returns false once the viewport can't move any further that way.
   const scrollBy = (px: number): boolean => {
+    const mouse = ['vt200', 'drag', 'any'].includes(term.modes.mouseTrackingMode);
+    const ownScroll = mouse || term.buffer.active.type === 'alternate';
+    const step = mouse ? lineHeight * LINES_PER_NOTCH : lineHeight;
     carry += px;
-    const lines = Math.trunc(carry / lineHeight);
-    if (!lines) return true;
-    carry -= lines * lineHeight;
+    const steps = Math.trunc(carry / step);
+    if (!steps) return true;
+    carry -= steps * step;
+    if (ownScroll) {
+      for (let i = 0; i < Math.abs(steps); i++) wheel(steps > 0);
+      return true; // there's no telling when the program runs out
+    }
     const before = term.buffer.active.viewportY;
-    term.scrollLines(lines);
+    term.scrollLines(steps);
     return term.buffer.active.viewportY !== before;
   };
 
@@ -71,11 +104,13 @@ function touchScroll(el: HTMLElement, term: XTerm): () => void {
     cancelAnimationFrame(frame);
     dragging = false;
     if (e.touches.length !== 1) return;
+    lastX = e.touches[0]!.clientX;
     lastY = e.touches[0]!.clientY;
     lastT = e.timeStamp;
     velocity = 0;
     carry = 0;
-    lineHeight = (el.querySelector('.xterm-screen')?.clientHeight ?? term.rows) / term.rows;
+    screen = el.querySelector('.xterm-screen');
+    lineHeight = (screen?.clientHeight ?? term.rows) / term.rows;
   };
   const onMove = (e: TouchEvent) => {
     if (e.touches.length !== 1) return;
@@ -85,6 +120,7 @@ function touchScroll(el: HTMLElement, term: XTerm): () => void {
     dragging = true;
     e.preventDefault();
     velocity = 0.8 * (dy / Math.max(1, e.timeStamp - lastT)) + 0.2 * velocity;
+    lastX = e.touches[0]!.clientX;
     lastY = y;
     lastT = e.timeStamp;
     scrollBy(dy);
